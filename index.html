@@ -1,48 +1,155 @@
-<script src="edge-impulse-standalone.js"></script>
-<script src="run-impulse.js"></script> <script>
-    async function initAI() {
-        const video = document.getElementById('webcam');
-        const status = document.getElementById('status-text');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Cart AI Scanner</title>
+    
+    <script src="edge-impulse-standalone.js"></script>
+    <script src="run-impulse.js"></script>
 
+    <style>
+        body {
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            text-align: center;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 450px;
+            margin: auto;
+            background: white;
+            padding: 25px;
+            border-radius: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        h2 { margin-top: 0; color: #007bff; }
+        input {
+            width: 90%;
+            padding: 12px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            font-size: 16px;
+        }
+        button {
+            width: 95%;
+            padding: 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:active { background-color: #0056b3; }
+        #webcam {
+            width: 100%;
+            border-radius: 15px;
+            margin-top: 20px;
+            display: none;
+            border: 3px solid #007bff;
+        }
+        .status-box {
+            margin-top: 20px;
+            padding: 10px;
+            border-top: 1px solid #eee;
+        }
+        #status-text { font-weight: bold; color: #555; }
+        #log { color: #28a745; margin-top: 10px; font-size: 14px; }
+        #error-display { color: #dc3545; font-size: 12px; margin-top: 10px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🛒 Smart Cart AI</h2>
+    
+    <input type="text" id="espIp" placeholder="ESP32 IP (e.g., 192.168.1.50)">
+    
+    <button id="startBtn">Start Scanner</button>
+
+    <video id="webcam" autoplay muted playsinline></video>
+
+    <div class="status-box">
+        <div id="status-text">Status: Ready</div>
+        <div id="log">Last Scanned: None</div>
+        <div id="error-display"></div>
+    </div>
+</div>
+
+<script>
+    let canScan = true;
+    let classifier;
+    const statusText = document.getElementById('status-text');
+    const logText = document.getElementById('log');
+    const errorDisplay = document.getElementById('error-display');
+    const espIpInput = document.getElementById('espIp');
+    const video = document.getElementById('webcam');
+    const startBtn = document.getElementById('startBtn');
+
+    // Handle the button click (Required for iOS Camera)
+    startBtn.addEventListener('click', async () => {
+        if (!espIpInput.value) {
+            alert("Please enter your ESP32 IP first!");
+            return;
+        }
+        startBtn.style.display = 'none';
+        await initAI();
+    });
+
+    async function initAI() {
         try {
-            // 1. Initialize the bridge class found in run-impulse.js
-            const classifier = new EdgeImpulseClassifier();
+            statusText.innerText = "Status: Initializing AI...";
             
-            // This waits for the .wasm file to load into the browser
-            await classifier.init(); 
+            // 1. Initialize Classifier
+            classifier = new EdgeImpulseClassifier();
+            await classifier.init();
             
-            status.innerText = "Status: AI Loaded! Starting Camera...";
+            statusText.innerText = "Status: Accessing Camera...";
 
             // 2. Request Camera
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" } 
+                video: { facingMode: "environment" },
+                audio: false 
             });
             video.srcObject = stream;
+            video.style.display = 'block';
 
-            // 3. Start Inference Loop once video plays
             video.onloadedmetadata = () => {
                 video.play();
-                status.innerText = "Status: Scanning...";
-                
-                setInterval(async () => {
-                    // Capture a frame and send to AI
-                    const results = await classifier.classify(video);
-                    
-                    // Edge Impulse WASM results are usually in 'results.results'
-                    if (results.results) {
-                        processResults(results.results);
-                    }
-                }, 600); // 600ms is a good balance for iPhone
+                statusText.innerText = "Status: Scanning Items...";
+                startInference();
             };
+
         } catch (e) {
-            status.innerText = "Error: " + e.message;
+            statusText.innerText = "Status: Failed";
+            errorDisplay.innerText = "Error: " + e.message;
             console.error(e);
         }
     }
 
+    function startInference() {
+        setInterval(async () => {
+            if (!canScan) return;
+
+            try {
+                const results = await classifier.classify(video);
+                if (results.results) {
+                    processResults(results.results);
+                }
+            } catch (err) {
+                console.error("Inference error:", err);
+            }
+        }, 600);
+    }
+
     function processResults(classifications) {
         const threshold = 0.85;
-        // The labels from your 4 items
         const labels = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
 
         classifications.forEach(res => {
@@ -51,4 +158,39 @@
             }
         });
     }
+
+    function sendToCart(itemName) {
+        canScan = false;
+        const ip = espIpInput.value;
+        logText.innerText = "Scanned: " + itemName + " (Sending...)";
+        
+        // Encode URL for spaces (e.g. Hot sauce -> Hot%20sauce)
+        const url = `http://${ip}/add?label=${encodeURIComponent(itemName)}`;
+
+        // Use 'no-cors' to bypass browser security for local network IP
+        fetch(url, { mode: 'no-cors' })
+            .then(() => {
+                logText.innerText = "✅ Added: " + itemName;
+            })
+            .catch(err => {
+                logText.innerText = "❌ Connection Failed";
+                errorDisplay.innerText = "Fetch Error: Check IP or Wi-Fi connection.";
+            })
+            .finally(() => {
+                // 3 Second cooldown to prevent double scans
+                setTimeout(() => {
+                    canScan = true;
+                    logText.innerText = "Ready for next item...";
+                }, 3000);
+            });
+    }
+
+    // Global error listener for debugging
+    window.onerror = function(msg, url, line) {
+        errorDisplay.innerText += "\nRuntime Error: " + msg + " (Line: " + line + ")";
+        return false;
+    };
 </script>
+
+</body>
+</html>
