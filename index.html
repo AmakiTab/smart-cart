@@ -11,10 +11,12 @@
         .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
         video { width: 100%; border-radius: 15px; margin: 15px 0; display: none; border: 3px solid #007bff; }
         .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; }
-        .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 10px; border-radius: 10px; font-size: 14px; }
+        .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 14px; line-height: 1.6; }
         input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; }
-        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; }
+        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; }
         #log { color: #28a745; font-weight: bold; margin-top: 10px; }
+        .bar-container { background: #ddd; height: 8px; border-radius: 4px; margin-top: 4px; margin-bottom: 8px; overflow: hidden; }
+        .bar-fill { background: #007bff; height: 100%; transition: width 0.2s; }
     </style>
 </head>
 <body>
@@ -43,39 +45,83 @@
 
     async function initAI() {
         try {
+            // 1. Initialize your custom class from run-impulse.js
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            // 2. Get model properties (like image width/height)
+            const props = classifier.getProperties();
+            console.log("Model expects:", props.input_width, "x", props.input_height);
+
+            // 3. Start the Camera
             const video = document.getElementById('webcam');
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
             video.srcObject = stream;
             video.style.display = 'block';
 
             video.onloadedmetadata = () => {
                 video.play();
+                
+                // Inference Loop
                 setInterval(async () => {
-                    const results = await classifier.classify(video);
-                    if (results.results) {
-                        updateUI(results.results);
-                        checkAndScan(results.results);
+                    if (!canScan) return;
+
+                    // Convert video frame to raw RGB array (Middleman)
+                    const imgData = getPixelData(video, props.input_width, props.input_height);
+                    
+                    // Run Classification
+                    const result = await classifier.classify(imgData);
+                    
+                    if (result.results) {
+                        updateUI(result.results);
+                        checkAndScan(result.results);
                     }
                 }, 600);
             };
         } catch (e) {
-            document.getElementById('top-result').innerText = "Error: " + e.message;
+            console.error(e);
+            document.getElementById('top-result').innerText = "AI Error: " + e.message;
         }
     }
 
-    function updateUI(classifications) {
-        // Find top result for the big text
-        const top = classifications.sort((a, b) => b.value - a.value)[0];
-        document.getElementById('top-result').innerText = `${top.label} (${top.value.toFixed(2)})`;
+    // Helper function to convert video to raw RGB data
+    function getPixelData(video, width, height) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, width, height);
+        
+        const img = ctx.getImageData(0, 0, width, height).data;
+        const pixels = [];
+        for (let i = 0; i < img.length; i += 4) {
+            // Convert to RGB (ignoring Alpha channel)
+            pixels.push(img[i], img[i+1], img[i+2]);
+        }
+        return pixels;
+    }
 
-        // Create the list view like your screenshot
+    function updateUI(classifications) {
+        // Find top result for the main display
+        const sorted = [...classifications].sort((a, b) => b.value - a.value);
+        const top = sorted[0];
+        document.getElementById('top-result').innerText = `${top.label} (${(top.value * 100).toFixed(0)}%)`;
+
+        // Render confidence list with progress bars
         let listHtml = "";
         classifications.forEach(res => {
-            const isTarget = targets.includes(res.label) ? "★ " : "  ";
-            listHtml += `<div>${isTarget}${res.label.padEnd(12)}: ${res.value.toFixed(2)}</div>`;
+            const percent = (res.value * 100).toFixed(0);
+            const isTarget = targets.includes(res.label);
+            const labelIcon = isTarget ? "★ " : "  ";
+            const barColor = isTarget ? "#007bff" : "#6c757d";
+
+            listHtml += `
+                <div>
+                    <span>${labelIcon}${res.label}: ${percent}%</span>
+                    <div class="bar-container">
+                        <div class="bar-fill" style="width: ${percent}%; background: ${barColor};"></div>
+                    </div>
+                </div>`;
         });
         document.getElementById('conf-list').innerHTML = listHtml;
     }
@@ -83,13 +129,13 @@
     function checkAndScan(classifications) {
         if (!canScan) return;
 
-        // Skip Background: Find the highest scoring item that is in our target list
+        // Skip Background: Find the highest scoring item in our target list
         const bestItem = classifications
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value)[0];
 
-        // Trigger if item exists and is over 0.70 confidence
-        if (bestItem && bestItem.value > 0.70) {
+        // Trigger if confidence is over 75%
+        if (bestItem && bestItem.value > 0.75) {
             sendToCart(bestItem.label);
         }
     }
@@ -101,12 +147,13 @@
         canScan = false;
         document.getElementById('log').innerText = "✅ SCANNED: " + itemName;
         
+        // Mode 'no-cors' allows hitting a local ESP32 IP from an HTTPS site
         fetch(`http://${ip}/add?label=${encodeURIComponent(itemName)}`, { mode: 'no-cors' })
             .finally(() => {
                 setTimeout(() => { 
                     canScan = true; 
                     document.getElementById('log').innerText = "Ready for next item...";
-                }, 3000);
+                }, 3000); // 3-second cooldown
             });
     }
 </script>
