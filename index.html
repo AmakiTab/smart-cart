@@ -4,187 +4,111 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Cart AI Scanner</title>
-    
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
-
     <style>
-        body {
-            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            text-align: center;
-            background-color: #f0f2f5;
-            margin: 0;
-            padding: 20px;
-            color: #333;
-        }
-        .container {
-            max-width: 450px;
-            margin: auto;
-            background: white;
-            padding: 25px;
-            border-radius: 20px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        h2 { margin-top: 0; color: #007bff; }
-        input {
-            width: 90%;
-            padding: 12px;
-            margin: 10px 0;
-            border: 1px solid #ddd;
-            border-radius: 10px;
-            font-size: 16px;
-        }
-        button {
-            width: 95%;
-            padding: 15px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 18px;
-            font-weight: bold;
-            cursor: pointer;
-            margin-top: 10px;
-        }
-        button:active { background-color: #0056b3; }
-        #webcam {
-            width: 100%;
-            border-radius: 15px;
-            margin-top: 20px;
-            display: none;
-            border: 3px solid #007bff;
-        }
-        .status-box {
-            margin-top: 20px;
-            padding: 10px;
-            border-top: 1px solid #eee;
-        }
-        #status-text { font-weight: bold; color: #555; }
-        #log { color: #28a745; margin-top: 10px; font-size: 14px; }
-        #error-display { color: #dc3545; font-size: 12px; margin-top: 10px; white-space: pre-wrap; }
+        body { font-family: sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
+        .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        video { width: 100%; border-radius: 15px; margin: 15px 0; display: none; border: 3px solid #007bff; }
+        .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; }
+        .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 10px; border-radius: 10px; font-size: 14px; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; }
+        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; }
+        #log { color: #28a745; font-weight: bold; margin-top: 10px; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <h2>🛒 Smart Cart AI</h2>
+    <input type="text" id="espIp" placeholder="Enter ESP32 IP (e.g. 192.168.1.50)">
+    <button id="startBtn">Start Inferencing...</button>
     
-    <input type="text" id="espIp" placeholder="ESP32 IP (e.g., 192.168.1.50)">
-    
-    <button id="startBtn">Start Scanner</button>
-
     <video id="webcam" autoplay muted playsinline></video>
 
-    <div class="status-box">
-        <div id="status-text">Status: Ready</div>
-        <div id="log">Last Scanned: None</div>
-        <div id="error-display"></div>
-    </div>
+    <div id="top-result" class="inference-display">Waiting...</div>
+    <div id="conf-list" class="confidence-list"></div>
+    <div id="log">Last Scanned: None</div>
 </div>
 
 <script>
     let canScan = true;
     let classifier;
-    const statusText = document.getElementById('status-text');
-    const logText = document.getElementById('log');
-    const errorDisplay = document.getElementById('error-display');
-    const espIpInput = document.getElementById('espIp');
-    const video = document.getElementById('webcam');
-    const startBtn = document.getElementById('startBtn');
+    const targets = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
 
-    startBtn.addEventListener('click', async () => {
-        if (!espIpInput.value) {
-            alert("Please enter your ESP32 IP first!");
-            return;
-        }
-        startBtn.style.display = 'none';
+    document.getElementById('startBtn').onclick = async () => {
+        document.getElementById('startBtn').style.display = 'none';
         await initAI();
-    });
+    };
 
     async function initAI() {
         try {
-            statusText.innerText = "Status: Initializing AI...";
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
-            statusText.innerText = "Status: Accessing Camera...";
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" },
-                audio: false 
-            });
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            const video = document.getElementById('webcam');
             video.srcObject = stream;
             video.style.display = 'block';
 
             video.onloadedmetadata = () => {
                 video.play();
-                statusText.innerText = "Status: Scanning Items...";
-                startInference();
+                setInterval(async () => {
+                    const results = await classifier.classify(video);
+                    if (results.results) {
+                        updateUI(results.results);
+                        checkAndScan(results.results);
+                    }
+                }, 600);
             };
         } catch (e) {
-            statusText.innerText = "Status: Failed";
-            errorDisplay.innerText = "Error: " + e.message;
+            document.getElementById('top-result').innerText = "Error: " + e.message;
         }
     }
 
-    function startInference() {
-        setInterval(async () => {
-            if (!canScan) return;
-            try {
-                const results = await classifier.classify(video);
-                if (results.results) {
-                    // FIX 1: Name changed to match the logic function below
-                    processInference(results.results);
-                }
-            } catch (err) {
-                console.error("Inference error:", err);
-            }
-        }, 600);
+    function updateUI(classifications) {
+        // Find top result for the big text
+        const top = classifications.sort((a, b) => b.value - a.value)[0];
+        document.getElementById('top-result').innerText = `${top.label} (${top.value.toFixed(2)})`;
+
+        // Create the list view like your screenshot
+        let listHtml = "";
+        classifications.forEach(res => {
+            const isTarget = targets.includes(res.label) ? "★ " : "  ";
+            listHtml += `<div>${isTarget}${res.label.padEnd(12)}: ${res.value.toFixed(2)}</div>`;
+        });
+        document.getElementById('conf-list').innerHTML = listHtml;
     }
 
-    function processInference(classifications) {
-        const threshold = 0.50; 
-        const targets = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
-        
-        const sorted = classifications.sort((a, b) => b.value - a.value);
-        const bestItem = sorted.find(res => targets.includes(res.label));
-        const topMatch = sorted[0];
-        
-        statusText.innerText = `Top: ${topMatch.label} (${(topMatch.value * 100).toFixed(0)}%)`;
+    function checkAndScan(classifications) {
+        if (!canScan) return;
 
-        if (bestItem && bestItem.value > threshold && canScan) {
-            // FIX 2: Name changed to match the sending function below
+        // Skip Background: Find the highest scoring item that is in our target list
+        const bestItem = classifications
+            .filter(res => targets.includes(res.label))
+            .sort((a, b) => b.value - a.value)[0];
+
+        // Trigger if item exists and is over 0.70 confidence
+        if (bestItem && bestItem.value > 0.70) {
             sendToCart(bestItem.label);
         }
     }
 
     function sendToCart(itemName) {
-        canScan = false;
-        const ip = espIpInput.value;
-        logText.innerText = "Scanned: " + itemName + " (Sending...)";
-        
-        const url = `http://${ip}/add?label=${encodeURIComponent(itemName)}`;
+        const ip = document.getElementById('espIp').value;
+        if (!ip) return;
 
-        fetch(url, { mode: 'no-cors' })
-            .then(() => {
-                logText.innerText = "✅ Added: " + itemName;
-            })
-            .catch(err => {
-                logText.innerText = "❌ Connection Failed";
-                errorDisplay.innerText = "Fetch Error: Check IP or Wi-Fi.";
-            })
+        canScan = false;
+        document.getElementById('log').innerText = "✅ SCANNED: " + itemName;
+        
+        fetch(`http://${ip}/add?label=${encodeURIComponent(itemName)}`, { mode: 'no-cors' })
             .finally(() => {
-                setTimeout(() => {
-                    canScan = true;
-                    logText.innerText = "Ready for next item...";
+                setTimeout(() => { 
+                    canScan = true; 
+                    document.getElementById('log').innerText = "Ready for next item...";
                 }, 3000);
             });
     }
-
-    window.onerror = function(msg, url, line) {
-        errorDisplay.innerText += "\nRuntime Error: " + msg + " (Line: " + line + ")";
-        return false;
-    };
 </script>
-
 </body>
 </html>
