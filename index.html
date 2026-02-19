@@ -92,7 +92,6 @@
     const video = document.getElementById('webcam');
     const startBtn = document.getElementById('startBtn');
 
-    // Handle the button click (Required for iOS Camera)
     startBtn.addEventListener('click', async () => {
         if (!espIpInput.value) {
             alert("Please enter your ESP32 IP first!");
@@ -105,14 +104,10 @@
     async function initAI() {
         try {
             statusText.innerText = "Status: Initializing AI...";
-            
-            // 1. Initialize Classifier
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
             statusText.innerText = "Status: Accessing Camera...";
-
-            // 2. Request Camera
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 video: { facingMode: "environment" },
                 audio: false 
@@ -125,22 +120,20 @@
                 statusText.innerText = "Status: Scanning Items...";
                 startInference();
             };
-
         } catch (e) {
             statusText.innerText = "Status: Failed";
             errorDisplay.innerText = "Error: " + e.message;
-            console.error(e);
         }
     }
 
     function startInference() {
         setInterval(async () => {
             if (!canScan) return;
-
             try {
                 const results = await classifier.classify(video);
                 if (results.results) {
-                    processResults(results.results);
+                    // FIX 1: Name changed to match the logic function below
+                    processInference(results.results);
                 }
             } catch (err) {
                 console.error("Inference error:", err);
@@ -148,15 +141,20 @@
         }, 600);
     }
 
-    function processResults(classifications) {
-        const threshold = 0.50;
-        const labels = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
+    function processInference(classifications) {
+        const threshold = 0.50; 
+        const targets = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
+        
+        const sorted = classifications.sort((a, b) => b.value - a.value);
+        const bestItem = sorted.find(res => targets.includes(res.label));
+        const topMatch = sorted[0];
+        
+        statusText.innerText = `Top: ${topMatch.label} (${(topMatch.value * 100).toFixed(0)}%)`;
 
-        classifications.forEach(res => {
-            if (labels.includes(res.label) && res.value > threshold && canScan) {
-                sendToCart(res.label);
-            }
-        });
+        if (bestItem && bestItem.value > threshold && canScan) {
+            // FIX 2: Name changed to match the sending function below
+            sendToCart(bestItem.label);
+        }
     }
 
     function sendToCart(itemName) {
@@ -164,20 +162,17 @@
         const ip = espIpInput.value;
         logText.innerText = "Scanned: " + itemName + " (Sending...)";
         
-        // Encode URL for spaces (e.g. Hot sauce -> Hot%20sauce)
         const url = `http://${ip}/add?label=${encodeURIComponent(itemName)}`;
 
-        // Use 'no-cors' to bypass browser security for local network IP
         fetch(url, { mode: 'no-cors' })
             .then(() => {
                 logText.innerText = "✅ Added: " + itemName;
             })
             .catch(err => {
                 logText.innerText = "❌ Connection Failed";
-                errorDisplay.innerText = "Fetch Error: Check IP or Wi-Fi connection.";
+                errorDisplay.innerText = "Fetch Error: Check IP or Wi-Fi.";
             })
             .finally(() => {
-                // 3 Second cooldown to prevent double scans
                 setTimeout(() => {
                     canScan = true;
                     logText.innerText = "Ready for next item...";
@@ -185,7 +180,6 @@
             });
     }
 
-    // Global error listener for debugging
     window.onerror = function(msg, url, line) {
         errorDisplay.innerText += "\nRuntime Error: " + msg + " (Line: " + line + ")";
         return false;
@@ -194,4 +188,3 @@
 
 </body>
 </html>
-
