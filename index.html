@@ -1,52 +1,54 @@
-<body>
-    <h2>Smart Cart AI</h2>
-    <div class="status">
-        <input type="text" id="espIp" placeholder="Enter ESP32 IP">
-        <button id="startBtn" style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 5px;">
-            Start Camera
-        </button>
-        <div id="status-text">Status: Click Start Camera</div>
-        <div id="log">Last Scanned: None</div>
-    </div>
+<script src="edge-impulse-standalone.js"></script>
+<script src="run-impulse.js"></script> <script>
+    async function initAI() {
+        const video = document.getElementById('webcam');
+        const status = document.getElementById('status-text');
 
-    <div id="video-container">
-        <video id="webcam" autoplay muted playsinline></video>
-    </div>
+        try {
+            // 1. Initialize the bridge class found in run-impulse.js
+            const classifier = new EdgeImpulseClassifier();
+            
+            // This waits for the .wasm file to load into the browser
+            await classifier.init(); 
+            
+            status.innerText = "Status: AI Loaded! Starting Camera...";
 
-    <script>
-        // ... (Keep your existing variables) ...
-
-        document.getElementById('startBtn').addEventListener('click', async () => {
-            try {
-                document.getElementById('status-text').innerText = "Status: Initializing AI...";
-                await initAI();
-                document.getElementById('status-text').innerText = "Status: Camera Active";
-                document.getElementById('startBtn').style.display = 'none'; // Hide button after start
-            } catch (err) {
-                document.getElementById('status-text').innerText = "Error: " + err.message;
-            }
-        });
-
-        async function initAI() {
-            const video = document.getElementById('webcam');
-            // 'facingMode: environment' uses the back camera
+            // 2. Request Camera
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" }, 
-                audio: false 
+                video: { facingMode: "environment" } 
             });
             video.srcObject = stream;
-            
-            // Wait for video to be ready before starting AI
-            return new Promise((resolve) => {
-                video.onloadedmetadata = () => {
-                    video.play();
-                    // Start your classification loop here
-                    startInferenceLoop(video);
-                    resolve();
-                };
-            });
+
+            // 3. Start Inference Loop once video plays
+            video.onloadedmetadata = () => {
+                video.play();
+                status.innerText = "Status: Scanning...";
+                
+                setInterval(async () => {
+                    // Capture a frame and send to AI
+                    const results = await classifier.classify(video);
+                    
+                    // Edge Impulse WASM results are usually in 'results.results'
+                    if (results.results) {
+                        processResults(results.results);
+                    }
+                }, 600); // 600ms is a good balance for iPhone
+            };
+        } catch (e) {
+            status.innerText = "Error: " + e.message;
+            console.error(e);
         }
-        
-        // ... (Keep your startInferenceLoop and processResults functions) ...
-    </script>
-</body>
+    }
+
+    function processResults(classifications) {
+        const threshold = 0.85;
+        // The labels from your 4 items
+        const labels = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
+
+        classifications.forEach(res => {
+            if (labels.includes(res.label) && res.value > threshold && canScan) {
+                sendToCart(res.label);
+            }
+        });
+    }
+</script>
