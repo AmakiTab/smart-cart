@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Smart Cart AI Scanner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.edgeimpulse.com/edge-impulse-standalone.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #f4f4f4; padding: 20px; }
+        #video-container { position: relative; width: 100%; max-width: 400px; margin: auto; }
+        video { width: 100%; border-radius: 10px; border: 4px solid #333; }
+        .status { margin: 20px; padding: 15px; border-radius: 8px; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        #log { color: green; font-weight: bold; }
+        input { padding: 10px; width: 80%; margin-bottom: 10px; border-radius: 5px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+
+    <h2>Smart Cart AI</h2>
+    
+    <div class="status">
+        <input type="text" id="espIp" placeholder="Enter ESP32 IP (e.g. 192.168.1.50)">
+        <div id="status-text">Status: Waiting for Camera...</div>
+        <div id="log">Last Scanned: None</div>
+    </div>
+
+    <div id="video-container">
+        <video id="webcam" autoplay muted playsinline></video>
+    </div>
+
+    <script>
+        let canScan = true;
+        const espIpInput = document.getElementById('espIp');
+        const logDiv = document.getElementById('log');
+
+        async function initAI() {
+            // 1. Initialize the Edge Impulse runner
+            // Replace 'YOUR_PROJECT_API_KEY' with your project's development keys if needed, 
+            // OR use the 'Deployment' -> 'WebAssembly' file directly.
+            const runner = new EdgeImpulseRunner(); 
+            
+            // 2. Start Camera
+            const video = document.getElementById('webcam');
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            video.srcObject = stream;
+
+            // 3. Inference Loop
+            setInterval(async () => {
+                const result = await runner.classify(video);
+                if (result.classification) {
+                    processResults(result.classification);
+                }
+            }, 500); // Check every 500ms
+        }
+
+        function processResults(results) {
+            const threshold = 0.85; // 85% confidence
+            const items = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
+
+            for (const item of items) {
+                if (results[item] > threshold && canScan) {
+                    sendToCart(item);
+                    break; 
+                }
+            }
+        }
+
+        function sendToCart(itemName) {
+            const ip = espIpInput.value;
+            if (!ip) { alert("Please enter ESP32 IP first!"); return; }
+
+            canScan = false;
+            logDiv.innerText = "Scanning: " + itemName + "...";
+            
+            // Format URL (Hot sauce becomes Hot%20sauce)
+            const url = `http://${ip}/add?label=${encodeURIComponent(itemName)}`;
+
+            fetch(url, { mode: 'no-cors' }) // 'no-cors' helps bypass some browser security blocks for local IPs
+                .then(() => {
+                    logDiv.innerText = "Added: " + itemName;
+                    // 3 second cooldown
+                    setTimeout(() => { canScan = true; logDiv.innerText = "Ready for next item"; }, 3000);
+                })
+                .catch(err => {
+                    console.error(err);
+                    canScan = true;
+                });
+        }
+
+        // Start when page loads
+        window.onload = initAI;
+    </script>
+</body>
+</html>
