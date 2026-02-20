@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI - V2 (Fixed Loop)</title>
+    <title>Smart Cart AI - V2 (Optimized Crop)</title>
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
         .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        /* Debug Canvas: Set to block if you want to see the 160x160 crop */
         #debugCanvas { border: 2px solid #dc3545; border-radius: 10px; margin-top: 10px; display: none; margin-left: auto; margin-right: auto; }
         video { width: 100%; border-radius: 15px; margin: 15px 0; border: 3px solid #007bff; background: #000; }
         .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; min-height: 32px; }
@@ -80,7 +81,6 @@
                 video.play();
                 statusDisplay.innerText = "Scanning...";
                 
-                // Using a safe loop that won't "Freeze"
                 const runLoop = async () => {
                     try {
                         if (video.videoWidth > 0) {
@@ -92,9 +92,9 @@
                             }
                         }
                     } catch (err) {
-                        console.error("Inference error:", err);
+                        console.error("Inference Error:", err);
                     }
-                    setTimeout(runLoop, 400); // Trigger next run
+                    setTimeout(runLoop, 350); // Balanced speed for ESP32 & AI
                 };
                 runLoop();
             };
@@ -104,16 +104,29 @@
         }
     }
 
+    /**
+     * IMPLEMENTING: Fit to Shortest Axis (Center Crop)
+     * This takes the middle square of the webcam and scales it to 160x160.
+     */
     function getPixelData(video, targetW, targetH) {
         const ctx = debugCanvas.getContext('2d');
-        const size = Math.min(video.videoWidth, video.videoHeight);
-        const xOffset = (video.videoWidth - size) / 2;
-        const yOffset = (video.videoHeight - size) / 2;
         
-        ctx.drawImage(video, xOffset, yOffset, size, size, 0, 0, targetW, targetH);
+        // Fit to Shortest Axis Logic
+        const videoW = video.videoWidth;
+        const videoH = video.videoHeight;
+        const shortestSide = Math.min(videoW, videoH);
+        
+        // Calculate the starting X/Y to grab the center square
+        const sourceX = (videoW - shortestSide) / 2;
+        const sourceY = (videoH - shortestSide) / 2;
+        
+        // Draw centered square crop into 160x160 canvas
+        ctx.drawImage(video, sourceX, sourceY, shortestSide, shortestSide, 0, 0, targetW, targetH);
+        
         const imgData = ctx.getImageData(0, 0, targetW, targetH).data;
         const pixels = [];
 
+        // Normalization (0-255 -> 0-1)
         for (let i = 0; i < imgData.length; i += 4) { 
             pixels.push(imgData[i] / 255.0); 
             pixels.push(imgData[i+1] / 255.0);
@@ -151,7 +164,7 @@
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value)[0];
 
-        if (bestItem && bestItem.value > 0.30) {
+        if (bestItem && bestItem.value > 0.35) { // Threshold for button activation
             currentDetectedItem = bestItem.label;
             addBtn.style.display = 'block';
             addBtn.innerText = `➕ Add ${bestItem.label}`;
@@ -164,12 +177,14 @@
     }
 
     addBtn.onclick = () => { if (currentDetectedItem) sendToCart(currentDetectedItem, 'add'); };
+    
+    // REMOVE logic: Priorities camera view, then history
     removeBtn.onclick = () => {
         const itemToRemove = currentDetectedItem || lastAddedItem;
         if (itemToRemove) {
             sendToCart(itemToRemove, 'remove');
         } else {
-            logDisplay.innerText = "Nothing to remove!";
+            logDisplay.innerText = "Nothing detected to remove!";
             logDisplay.style.color = "#dc3545";
         }
     };
