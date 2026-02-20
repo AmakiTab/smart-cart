@@ -3,28 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI - V2 (160x160 RGB)</title>
+    <title>Smart Cart AI - V2 (Fixed Loop)</title>
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
         .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        
-        /* The Debug Canvas is used for preprocessing the 160x160 image */
         #debugCanvas { border: 2px solid #dc3545; border-radius: 10px; margin-top: 10px; display: none; margin-left: auto; margin-right: auto; }
-        
         video { width: 100%; border-radius: 15px; margin: 15px 0; border: 3px solid #007bff; background: #000; }
         .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; min-height: 32px; }
         .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 13px; line-height: 1.4; }
         input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 16px; outline: none; }
-        input:focus { border-color: #007bff; }
-        
-        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; transition: 0.2s; }
-        button:active { transform: scale(0.98); }
-        
+        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; }
         .btn-add { background: #28a745; display: none; }
         .btn-remove { background: #dc3545; }
-        
         #log { color: #28a745; font-weight: bold; margin-top: 10px; height: 20px; }
         .bar-container { background: #ddd; height: 8px; border-radius: 4px; margin-top: 4px; margin-bottom: 8px; overflow: hidden; }
         .bar-fill { background: #007bff; height: 100%; transition: width 0.2s; }
@@ -45,7 +37,7 @@
     
     <div class="action-area">
         <button id="addBtn" class="btn-add">➕ Add Detected Item</button>
-        <button id="removeBtn" class="btn-remove">🔄 Remove Item</button>
+        <button id="removeBtn" class="btn-remove">🗑️ Remove Item</button>
     </div>
 
     <div id="conf-list" class="confidence-list"></div>
@@ -56,8 +48,6 @@
     let classifier;
     let currentDetectedItem = null;
     let lastAddedItem = null; 
-
-    // YOUR MODEL LABELS
     const targets = ["Sun stick", "Clay stick", "Grips", "Lighter"];
 
     const addBtn = document.getElementById('addBtn');
@@ -89,14 +79,24 @@
             video.onloadedmetadata = () => {
                 video.play();
                 statusDisplay.innerText = "Scanning...";
-                setInterval(async () => {
-                    const imgData = getPixelData(video, props.input_width, props.input_height);
-                    const result = await classifier.classify(imgData);
-                    if (result.results) {
-                        updateUI(result.results);
-                        checkDetection(result.results);
+                
+                // Using a safe loop that won't "Freeze"
+                const runLoop = async () => {
+                    try {
+                        if (video.videoWidth > 0) {
+                            const imgData = getPixelData(video, props.input_width, props.input_height);
+                            const result = await classifier.classify(imgData);
+                            if (result.results) {
+                                updateUI(result.results);
+                                checkDetection(result.results);
+                            }
+                        }
+                    } catch (err) {
+                        console.error("Inference error:", err);
                     }
-                }, 600);
+                    setTimeout(runLoop, 400); // Trigger next run
+                };
+                runLoop();
             };
         } catch (e) { 
             statusDisplay.innerText = "AI Error!";
@@ -104,28 +104,20 @@
         }
     }
 
-    /**
-     * PREPROCESSING: 
-     * 1. Center-crops to Square
-     * 2. Resizes to 160x160
-     * 3. Normalizes 0-255 to 0.0-1.0 (Fixes the "Background Only" issue)
-     */
     function getPixelData(video, targetW, targetH) {
         const ctx = debugCanvas.getContext('2d');
-        const videoW = video.videoWidth;
-        const videoH = video.videoHeight;
-        const size = Math.min(videoW, videoH);
-        const xOffset = (videoW - size) / 2;
-        const yOffset = (videoH - size) / 2;
+        const size = Math.min(video.videoWidth, video.videoHeight);
+        const xOffset = (video.videoWidth - size) / 2;
+        const yOffset = (video.videoHeight - size) / 2;
         
         ctx.drawImage(video, xOffset, yOffset, size, size, 0, 0, targetW, targetH);
         const imgData = ctx.getImageData(0, 0, targetW, targetH).data;
         const pixels = [];
 
         for (let i = 0; i < imgData.length; i += 4) { 
-            pixels.push(imgData[i] / 255.0);     // R
-            pixels.push(imgData[i+1] / 255.0);   // G
-            pixels.push(imgData[i+2] / 255.0);   // B
+            pixels.push(imgData[i] / 255.0); 
+            pixels.push(imgData[i+1] / 255.0);
+            pixels.push(imgData[i+2] / 255.0);
         }
         return pixels;
     }
@@ -167,25 +159,17 @@
         } else {
             currentDetectedItem = null;
             addBtn.style.display = 'none';
-            removeBtn.innerText = lastAddedItem ? `🔄 Remove Last (${lastAddedItem})` : `🔄 Remove Item`;
+            removeBtn.innerText = lastAddedItem ? `🗑️ Remove Last (${lastAddedItem})` : `🗑️ Remove Item`;
         }
     }
 
-    // --- BUTTON ACTIONS ---
-
-    addBtn.onclick = () => { 
-        if (currentDetectedItem) {
-            sendToCart(currentDetectedItem, 'add'); 
-        } 
-    };
-
+    addBtn.onclick = () => { if (currentDetectedItem) sendToCart(currentDetectedItem, 'add'); };
     removeBtn.onclick = () => {
-        // Prioritize what camera currently sees, fallback to what was last added
         const itemToRemove = currentDetectedItem || lastAddedItem;
         if (itemToRemove) {
             sendToCart(itemToRemove, 'remove');
         } else {
-            logDisplay.innerText = "No item detected to remove!";
+            logDisplay.innerText = "Nothing to remove!";
             logDisplay.style.color = "#dc3545";
         }
     };
@@ -197,7 +181,6 @@
         logDisplay.innerText = (action === 'add' ? "Adding " : "Removing ") + itemName + "...";
         logDisplay.style.color = "#007bff";
 
-        // Uses a "dummy image" request to avoid CORS issues on ESP32
         const img = new Image();
         img.src = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
         
