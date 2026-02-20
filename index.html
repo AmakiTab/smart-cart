@@ -29,7 +29,7 @@
 
 <div class="container">
     <h2>🛒 Smart Cart AI</h2>
-    <input type="text" id="espIp" placeholder="Enter ESP32 IP">
+    <input type="text" id="espIp" placeholder="Enter ESP32 IP (e.g. 192.168.1.50)">
     <button id="startBtn">Start Inferencing...</button>
     
     <video id="webcam" autoplay muted playsinline></video>
@@ -37,17 +37,17 @@
     
     <div class="action-area">
         <button id="addBtn" class="btn-add">➕ Add Detected Item</button>
-        <button id="removeBtn" class="btn-remove">🔄 Remove Last Item</button>
+        <button id="removeBtn" class="btn-remove">🔄 Remove Item</button>
     </div>
 
     <div id="conf-list" class="confidence-list"></div>
-    <div id="log">Last Scanned: None</div>
+    <div id="log">Last Action: None</div>
 </div>
 
 <script>
     let classifier;
     let currentDetectedItem = null;
-    let lastAddedItem = null;
+    let lastAddedItem = null; 
     const targets = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
 
     const addBtn = document.getElementById('addBtn');
@@ -59,10 +59,24 @@
         await initAI();
     };
 
-    addBtn.onclick = () => { if (currentDetectedItem) sendToCart(currentDetectedItem, 'add'); };
+    // ADD: Sends the currently seen item to the ESP32
+    addBtn.onclick = () => { 
+        if (currentDetectedItem) {
+            sendToCart(currentDetectedItem, 'add'); 
+        } 
+    };
+
+    // REMOVE: Sends the currently seen item (or last added) to the ESP32 to subtract price
     removeBtn.onclick = () => {
-        if (lastAddedItem) sendToCart(lastAddedItem, 'remove');
-        else { logDisplay.innerText = "Nothing to remove!"; logDisplay.style.color = "#dc3545"; }
+        if (currentDetectedItem) {
+            sendToCart(currentDetectedItem, 'remove');
+        } else if (lastAddedItem) {
+            // Fallback to last added if camera doesn't see anything right now
+            sendToCart(lastAddedItem, 'remove');
+        } else {
+            logDisplay.innerText = "No item detected to remove!"; 
+            logDisplay.style.color = "#dc3545"; 
+        }
     };
 
     async function initAI() {
@@ -117,8 +131,7 @@
             
         const topItem = itemResults[0];
         
-        // Always show the top target item regardless of confidence
-        if (topItem) {
+        if (topItem && topItem.value > 0.05) {
              document.getElementById('top-result').innerText = `${topItem.label} (${(topItem.value * 100).toFixed(0)}%)`;
         } else {
              document.getElementById('top-result').innerText = `Searching...`;
@@ -135,19 +148,20 @@
     }
 
     function checkDetection(classifications) {
-        // Find the absolute highest scoring target item
         const bestItem = classifications
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value)[0];
 
-        // NO THRESHOLD: If an item exists in the list, show the button
-        if (bestItem) {
+        // If the item is detected with more than 10% confidence
+        if (bestItem && bestItem.value > 0.1) {
             currentDetectedItem = bestItem.label;
             addBtn.style.display = 'block';
             addBtn.innerText = `➕ Add ${bestItem.label}`;
+            removeBtn.innerText = `🔄 Remove ${bestItem.label}`;
         } else {
             currentDetectedItem = null;
             addBtn.style.display = 'none';
+            removeBtn.innerText = `🔄 Remove Last Item`;
         }
     }
 
@@ -156,8 +170,9 @@
         if (!ip) { alert("Please enter ESP32 IP first!"); return; }
 
         logDisplay.style.color = action === 'add' ? "#28a745" : "#dc3545";
-        logDisplay.innerText = action === 'add' ? `Adding ${itemName}...` : `Removing ${itemName}...`;
+        logDisplay.innerText = (action === 'add' ? "Adding " : "Removing ") + itemName + "...";
         
+        // Use an Image object to trigger the GET request to the ESP32 (avoids CORS issues)
         const img = new Image();
         img.src = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
         
@@ -167,7 +182,7 @@
                 lastAddedItem = itemName;
             } else {
                 logDisplay.innerText = "🗑️ Removed: " + itemName;
-                lastAddedItem = null;
+                if (lastAddedItem === itemName) lastAddedItem = null;
             }
         };
     }
