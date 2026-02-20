@@ -14,18 +14,14 @@
         .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 14px; line-height: 1.6; }
         input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 16px; }
         
-        /* Buttons */
         button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; }
         button:active { background: #0056b3; }
         .btn-add { background: #28a745; display: none; margin-top: 10px; }
-        .btn-add:active { background: #1e7e34; }
         .btn-remove { background: #dc3545; }
-        .btn-remove:active { background: #a71d2a; }
         
         #log { color: #28a745; font-weight: bold; margin-top: 10px; height: 20px; }
         .bar-container { background: #ddd; height: 8px; border-radius: 4px; margin-top: 4px; margin-bottom: 8px; overflow: hidden; }
         .bar-fill { background: #007bff; height: 100%; transition: width 0.2s; }
-        
         .action-area { margin: 20px 0; padding-top: 10px; border-top: 2px solid #eee; }
     </style>
 </head>
@@ -33,11 +29,10 @@
 
 <div class="container">
     <h2>🛒 Smart Cart AI</h2>
-    <input type="text" id="espIp" placeholder="Enter ESP32 IP (e.g. 192.168.1.50)">
+    <input type="text" id="espIp" placeholder="Enter ESP32 IP">
     <button id="startBtn">Start Inferencing...</button>
     
     <video id="webcam" autoplay muted playsinline></video>
-
     <div id="top-result" class="inference-display">Ready...</div>
     
     <div class="action-area">
@@ -50,13 +45,11 @@
 </div>
 
 <script>
-    let canScan = true;
     let classifier;
     let currentDetectedItem = null;
     let lastAddedItem = null;
     const targets = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
 
-    // Initialize UI Elements
     const addBtn = document.getElementById('addBtn');
     const removeBtn = document.getElementById('removeBtn');
     const logDisplay = document.getElementById('log');
@@ -66,21 +59,10 @@
         await initAI();
     };
 
-    // Manual Add Trigger
-    addBtn.onclick = () => {
-        if (currentDetectedItem) {
-            sendToCart(currentDetectedItem, 'add');
-        }
-    };
-
-    // Manual Remove Trigger
+    addBtn.onclick = () => { if (currentDetectedItem) sendToCart(currentDetectedItem, 'add'); };
     removeBtn.onclick = () => {
-        if (lastAddedItem) {
-            sendToCart(lastAddedItem, 'remove');
-        } else {
-            logDisplay.innerText = "Nothing to remove!";
-            logDisplay.style.color = "#dc3545";
-        }
+        if (lastAddedItem) sendToCart(lastAddedItem, 'remove');
+        else { logDisplay.innerText = "Nothing to remove!"; logDisplay.style.color = "#dc3545"; }
     };
 
     async function initAI() {
@@ -102,20 +84,16 @@
             video.onloadedmetadata = () => {
                 video.play();
                 statusDisplay.innerText = "Searching...";
-                
                 setInterval(async () => {
                     const imgData = getPixelData(video, props.input_width, props.input_height);
                     const result = await classifier.classify(imgData);
-                    
                     if (result.results) {
                         updateUI(result.results);
                         checkDetection(result.results);
                     }
                 }, 600);
             };
-        } catch (e) {
-            statusDisplay.innerText = "AI Error: " + e.message;
-        }
+        } catch (e) { statusDisplay.innerText = "AI Error: " + e.message; }
     }
 
     function getPixelData(video, targetW, targetH) {
@@ -133,12 +111,15 @@
     }
 
     function updateUI(classifications) {
-        const sortedTargets = classifications
+        const itemResults = classifications
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value);
             
-        if (sortedTargets.length > 0 && sortedTargets[0].value > 0.3) {
-             document.getElementById('top-result').innerText = `${sortedTargets[0].label} (${(sortedTargets[0].value * 100).toFixed(0)}%)`;
+        const topItem = itemResults[0];
+        
+        // Always show the top target item regardless of confidence
+        if (topItem) {
+             document.getElementById('top-result').innerText = `${topItem.label} (${(topItem.value * 100).toFixed(0)}%)`;
         } else {
              document.getElementById('top-result').innerText = `Searching...`;
         }
@@ -153,13 +134,14 @@
         document.getElementById('conf-list').innerHTML = listHtml;
     }
 
-    // Logic to show/hide the Add button based on 0.30 confidence
     function checkDetection(classifications) {
+        // Find the absolute highest scoring target item
         const bestItem = classifications
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value)[0];
 
-        if (bestItem && bestItem.value >= 0.30) {
+        // NO THRESHOLD: If an item exists in the list, show the button
+        if (bestItem) {
             currentDetectedItem = bestItem.label;
             addBtn.style.display = 'block';
             addBtn.innerText = `➕ Add ${bestItem.label}`;
@@ -176,17 +158,16 @@
         logDisplay.style.color = action === 'add' ? "#28a745" : "#dc3545";
         logDisplay.innerText = action === 'add' ? `Adding ${itemName}...` : `Removing ${itemName}...`;
         
-        // Sends /add?label=Item or /remove?label=Item
         const img = new Image();
         img.src = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
         
         img.onload = img.onerror = () => {
             if (action === 'add') {
-                logDisplay.innerText = "✅ Added to LCD: " + itemName;
-                lastAddedItem = itemName; // Store for removal logic
+                logDisplay.innerText = "✅ Added: " + itemName;
+                lastAddedItem = itemName;
             } else {
-                logDisplay.innerText = "🗑️ Removed from LCD: " + itemName;
-                lastAddedItem = null; // Clear since it was removed
+                logDisplay.innerText = "🗑️ Removed: " + itemName;
+                lastAddedItem = null;
             }
         };
     }
