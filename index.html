@@ -3,25 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI - V2 (Optimized Crop)</title>
+    <title>Smart Cart AI - Stability Build</title>
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
         .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        /* Debug Canvas: Set to block if you want to see the 160x160 crop */
-        #debugCanvas { border: 2px solid #dc3545; border-radius: 10px; margin-top: 10px; display: none; margin-left: auto; margin-right: auto; }
-        video { width: 100%; border-radius: 15px; margin: 15px 0; border: 3px solid #007bff; background: #000; }
+        
+        /* Debug Canvas: Shows exactly what the AI sees (160x160) */
+        #debugCanvas { border: 2px solid #dc3545; border-radius: 10px; margin-top: 10px; background: #000; }
+        
+        video { width: 100%; border-radius: 15px; margin: 15px 0; border: 3px solid #007bff; display: none; }
         .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; min-height: 32px; }
-        .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 13px; line-height: 1.4; }
-        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 16px; outline: none; }
+        .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 13px; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; }
+        
         button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; }
         .btn-add { background: #28a745; display: none; }
         .btn-remove { background: #dc3545; }
-        #log { color: #28a745; font-weight: bold; margin-top: 10px; height: 20px; }
+        
+        #log { color: #28a745; font-weight: bold; margin-top: 10px; }
         .bar-container { background: #ddd; height: 8px; border-radius: 4px; margin-top: 4px; margin-bottom: 8px; overflow: hidden; }
-        .bar-fill { background: #007bff; height: 100%; transition: width 0.2s; }
-        .action-area { margin: 20px 0; border-top: 2px solid #eee; padding-top: 15px; }
+        .bar-fill { background: #007bff; height: 100%; transition: width 0.1s; }
     </style>
 </head>
 <body>
@@ -31,13 +34,14 @@
     <input type="text" id="espIp" placeholder="ESP32 IP (e.g. 192.168.1.50)">
     <button id="startBtn">Initialize AI Scanner</button>
     
-    <video id="webcam" autoplay muted playsinline style="display:none;"></video>
+    <video id="webcam" autoplay muted playsinline></video>
+    <p>AI Input Feed (160x160):</p>
     <canvas id="debugCanvas" width="160" height="160"></canvas>
     
     <div id="top-result" class="inference-display">Ready...</div>
     
-    <div class="action-area">
-        <button id="addBtn" class="btn-add">➕ Add Detected Item</button>
+    <div style="margin: 20px 0; border-top: 2px solid #eee; padding-top: 15px;">
+        <button id="addBtn" class="btn-add">➕ Add Item</button>
         <button id="removeBtn" class="btn-remove">🗑️ Remove Item</button>
     </div>
 
@@ -49,6 +53,7 @@
     let classifier;
     let currentDetectedItem = null;
     let lastAddedItem = null; 
+    let isProcessing = false; // Flag to prevent overlapping AI runs
     const targets = ["Sun stick", "Clay stick", "Grips", "Lighter"];
 
     const addBtn = document.getElementById('addBtn');
@@ -56,10 +61,10 @@
     const logDisplay = document.getElementById('log');
     const video = document.getElementById('webcam');
     const debugCanvas = document.getElementById('debugCanvas');
+    const debugCtx = debugCanvas.getContext('2d', { alpha: false });
 
     document.getElementById('startBtn').onclick = async () => {
         document.getElementById('startBtn').style.display = 'none';
-        video.style.display = 'block';
         await initAI();
     };
 
@@ -72,31 +77,14 @@
             
             const props = classifier.getProperties(); 
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } } 
+                video: { facingMode: "environment", width: 640, height: 480 } 
             });
             
             video.srcObject = stream;
-
             video.onloadedmetadata = () => {
                 video.play();
                 statusDisplay.innerText = "Scanning...";
-                
-                const runLoop = async () => {
-                    try {
-                        if (video.videoWidth > 0) {
-                            const imgData = getPixelData(video, props.input_width, props.input_height);
-                            const result = await classifier.classify(imgData);
-                            if (result.results) {
-                                updateUI(result.results);
-                                checkDetection(result.results);
-                            }
-                        }
-                    } catch (err) {
-                        console.error("Inference Error:", err);
-                    }
-                    setTimeout(runLoop, 350); // Balanced speed for ESP32 & AI
-                };
-                runLoop();
+                requestAnimationFrame(predictLoop); // Start the stable loop
             };
         } catch (e) { 
             statusDisplay.innerText = "AI Error!";
@@ -104,35 +92,46 @@
         }
     }
 
-    /**
-     * IMPLEMENTING: Fit to Shortest Axis (Center Crop)
-     * This takes the middle square of the webcam and scales it to 160x160.
-     */
+    async function predictLoop() {
+        if (!isProcessing && video.readyState === 4) {
+            isProcessing = true;
+            try {
+                const props = classifier.getProperties();
+                const imgData = getPixelData(video, props.input_width, props.input_height);
+                const result = await classifier.classify(imgData);
+                
+                if (result.results) {
+                    updateUI(result.results);
+                    checkDetection(result.results);
+                }
+            } catch (err) {
+                console.error("Classification failed:", err);
+            }
+            isProcessing = false;
+        }
+        // Wait 100ms before next frame to keep UI responsive
+        setTimeout(() => requestAnimationFrame(predictLoop), 100);
+    }
+
     function getPixelData(video, targetW, targetH) {
-        const ctx = debugCanvas.getContext('2d');
-        
-        // Fit to Shortest Axis Logic
         const videoW = video.videoWidth;
         const videoH = video.videoHeight;
         const shortestSide = Math.min(videoW, videoH);
-        
-        // Calculate the starting X/Y to grab the center square
         const sourceX = (videoW - shortestSide) / 2;
         const sourceY = (videoH - shortestSide) / 2;
         
-        // Draw centered square crop into 160x160 canvas
-        ctx.drawImage(video, sourceX, sourceY, shortestSide, shortestSide, 0, 0, targetW, targetH);
+        // Fit to Shortest Axis (Center Crop)
+        debugCtx.drawImage(video, sourceX, sourceY, shortestSide, shortestSide, 0, 0, targetW, targetH);
         
-        const imgData = ctx.getImageData(0, 0, targetW, targetH).data;
-        const pixels = [];
+        const imgData = debugCtx.getImageData(0, 0, targetW, targetH).data;
+        const pixels = new Float32Array(targetW * targetH * 3);
 
-        // Normalization (0-255 -> 0-1)
-        for (let i = 0; i < imgData.length; i += 4) { 
-            pixels.push(imgData[i] / 255.0); 
-            pixels.push(imgData[i+1] / 255.0);
-            pixels.push(imgData[i+2] / 255.0);
+        for (let i = 0; i < imgData.length / 4; i++) { 
+            pixels[i * 3] = imgData[i * 4] / 255.0;     // R
+            pixels[i * 3 + 1] = imgData[i * 4 + 1] / 255.0; // G
+            pixels[i * 3 + 2] = imgData[i * 4 + 2] / 255.0; // B
         }
-        return pixels;
+        return Array.from(pixels);
     }
 
     function updateUI(classifications) {
@@ -143,7 +142,7 @@
         const topItem = filtered[0];
         const statusDisplay = document.getElementById('top-result');
         
-        if (topItem && topItem.value > 0.15) {
+        if (topItem && topItem.value > 0.20) {
              statusDisplay.innerText = `${topItem.label} (${(topItem.value * 100).toFixed(0)}%)`;
         } else {
              statusDisplay.innerText = `Scanning...`;
@@ -164,7 +163,7 @@
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value)[0];
 
-        if (bestItem && bestItem.value > 0.35) { // Threshold for button activation
+        if (bestItem && bestItem.value > 0.40) {
             currentDetectedItem = bestItem.label;
             addBtn.style.display = 'block';
             addBtn.innerText = `➕ Add ${bestItem.label}`;
@@ -177,38 +176,20 @@
     }
 
     addBtn.onclick = () => { if (currentDetectedItem) sendToCart(currentDetectedItem, 'add'); };
-    
-    // REMOVE logic: Priorities camera view, then history
     removeBtn.onclick = () => {
         const itemToRemove = currentDetectedItem || lastAddedItem;
-        if (itemToRemove) {
-            sendToCart(itemToRemove, 'remove');
-        } else {
-            logDisplay.innerText = "Nothing detected to remove!";
-            logDisplay.style.color = "#dc3545";
-        }
+        if (itemToRemove) sendToCart(itemToRemove, 'remove');
     };
 
     function sendToCart(itemName, action) {
         const ip = document.getElementById('espIp').value;
-        if (!ip) { alert("Enter ESP32 IP!"); return; }
-
-        logDisplay.innerText = (action === 'add' ? "Adding " : "Removing ") + itemName + "...";
-        logDisplay.style.color = "#007bff";
-
+        if (!ip) return;
         const img = new Image();
         img.src = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
-        
         img.onload = img.onerror = () => {
-            if (action === 'add') {
-                logDisplay.innerText = "✅ Added: " + itemName;
-                logDisplay.style.color = "#28a745";
-                lastAddedItem = itemName;
-            } else {
-                logDisplay.innerText = "🗑️ Removed: " + itemName;
-                logDisplay.style.color = "#dc3545";
-                if (lastAddedItem === itemName) lastAddedItem = null;
-            }
+            logDisplay.innerText = (action === 'add' ? "✅ Added: " : "🗑️ Removed: ") + itemName;
+            if (action === 'add') lastAddedItem = itemName;
+            else if (lastAddedItem === itemName) lastAddedItem = null;
         };
     }
 </script>
