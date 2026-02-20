@@ -3,140 +3,125 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI - High Stability</title>
+    <title>Smart Cart AI - Ultra Light</title>
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; text-align: center; background: #f4f7f9; margin: 0; padding: 15px; }
-        .container { max-width: 400px; margin: auto; background: white; padding: 20px; border-radius: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
-        
-        /* Smaller preview to save CPU power */
-        #webcam { width: 100%; border-radius: 15px; margin-bottom: 10px; border: 2px solid #007bff; background: #000; }
-        #debugCanvas { display: block; margin: 10px auto; border-radius: 8px; border: 1px solid #ccc; width: 120px; height: 120px; }
-        
-        .inference-display { font-size: 22px; font-weight: 700; color: #007bff; margin: 10px 0; }
-        .confidence-list { text-align: left; font-family: ui-monospace, monospace; background: #f8f9fa; padding: 12px; border-radius: 12px; font-size: 12px; }
-        
-        button { width: 100%; padding: 16px; background: #007bff; color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; margin-bottom: 8px; }
-        .btn-add { background: #28a745; display: none; }
-        .btn-remove { background: #dc3545; }
-        
-        input { width: 100%; box-sizing: border-box; padding: 12px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 10px; }
-        .bar-container { background: #eee; height: 6px; border-radius: 3px; margin: 4px 0 8px 0; overflow: hidden; }
-        .bar-fill { background: #007bff; height: 100%; transition: width 0.3s ease; }
-        #log { font-weight: 600; margin-top: 10px; font-size: 14px; min-height: 1.2em; }
+        body { font-family: sans-serif; text-align: center; background: #f0f2f5; padding: 10px; }
+        .container { max-width: 400px; margin: auto; background: white; padding: 15px; border-radius: 20px; }
+        video { width: 100%; border-radius: 10px; background: #000; height: 200px; object-fit: cover; }
+        #debugCanvas { border: 1px solid red; margin: 10px auto; display: block; width: 160px; height: 160px; }
+        .inference-display { font-size: 20px; font-weight: bold; color: #007bff; margin: 10px; }
+        .confidence-list { text-align: left; font-size: 11px; background: #eee; padding: 10px; border-radius: 10px; }
+        button { width: 100%; padding: 15px; margin: 5px 0; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; }
+        #startBtn { background: #007bff; color: white; }
+        .btn-add { background: #28a745; color: white; display: none; }
+        .btn-remove { background: #dc3545; color: white; }
+        .bar-container { background: #ccc; height: 5px; margin-bottom: 5px; }
+        .bar-fill { background: #007bff; height: 100%; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h3 style="margin-top:0">🛒 Smart Cart AI</h3>
-    <input type="text" id="espIp" placeholder="ESP32 IP (e.g. 192.168.1.50)">
-    <button id="startBtn">Enable Scanner</button>
+    <h2>🛒 Smart Cart AI</h2>
+    <input type="text" id="espIp" placeholder="ESP32 IP" style="width:80%; padding:10px; margin-bottom:10px;">
+    <button id="startBtn">Start Scanner</button>
     
     <video id="webcam" autoplay muted playsinline></video>
     <canvas id="debugCanvas" width="160" height="160"></canvas>
     
     <div id="top-result" class="inference-display">Paused</div>
     
-    <button id="addBtn" class="btn-add">➕ Add Detected Item</button>
+    <button id="addBtn" class="btn-add">➕ Add Item</button>
     <button id="removeBtn" class="btn-remove">🗑️ Remove Item</button>
 
     <div id="conf-list" class="confidence-list"></div>
-    <div id="log">Status: Waiting</div>
+    <div id="log" style="margin-top:10px; font-size:12px;"></div>
 </div>
 
 <script>
     let classifier;
     let currentDetectedItem = null;
-    let lastAddedItem = null; 
-    let busy = false;
+    let lastAddedItem = null;
     const targets = ["Sun stick", "Clay stick", "Grips", "Lighter"];
 
     const video = document.getElementById('webcam');
-    const debugCanvas = document.getElementById('debugCanvas');
-    const ctx = debugCanvas.getContext('2d', { alpha: false });
-    const logDisplay = document.getElementById('log');
+    const canvas = document.getElementById('debugCanvas');
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 
     document.getElementById('startBtn').onclick = async function() {
-        this.style.display = 'none';
-        await initAI();
-    };
-
-    async function initAI() {
+        this.innerText = "Initializing...";
         try {
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: 320, height: 240 } // Lower resolution video to save lag
+                video: { facingMode: "environment", width: 320, height: 320 } 
             });
-            
             video.srcObject = stream;
-            video.onloadedmetadata = () => {
+            
+            // Wait for video to actually start
+            video.onloadeddata = () => {
                 video.play();
-                requestAnimationFrame(loop);
+                console.log("AI Loop Started");
+                setTimeout(aiLoop, 1000); 
             };
         } catch (e) {
-            document.getElementById('top-result').innerText = "Camera Error";
-            console.error(e);
+            alert("Error: " + e.message);
         }
-    }
+    };
 
-    async function loop() {
-        if (!busy && video.readyState === 4) {
-            busy = true;
-            try {
-                // 1. Pre-process frame (Center Crop + Resize)
-                const pixels = getNormalizedPixels();
-                
-                // 2. Run AI
-                const result = await classifier.classify(pixels);
-                
-                // 3. Update UI
-                if (result.results) {
-                    updateDisplay(result.results);
-                }
-            } catch (err) {
-                console.error(err);
+    async function aiLoop() {
+        if (video.paused || video.ended) return;
+
+        try {
+            // 1. Snapshot the video center-crop
+            const size = Math.min(video.videoWidth, video.videoHeight);
+            const x = (video.videoWidth - size) / 2;
+            const y = (video.videoHeight - size) / 2;
+            ctx.drawImage(video, x, y, size, size, 0, 0, 160, 160);
+
+            // 2. Get Pixels and Normalize
+            const imgData = ctx.getImageData(0, 0, 160, 160).data;
+            let pixels = [];
+            for (let i = 0; i < imgData.length; i += 4) {
+                pixels.push(imgData[i] / 255);
+                pixels.push(imgData[i+1] / 255);
+                pixels.push(imgData[i+2] / 255);
             }
-            // Give the CPU a 200ms rest between AI scans to stop the lag
-            setTimeout(() => { busy = false; }, 200);
+
+            // 3. Classify
+            const result = await classifier.classify(pixels);
+            
+            // 4. Update UI
+            if (result.results) {
+                updateUI(result.results);
+            }
+
+            // 5. Cleanup memory
+            pixels = null; 
+
+        } catch (err) {
+            console.error("AI Error:", err);
         }
-        requestAnimationFrame(loop);
+
+        // WAIT 1 FULL SECOND before scanning again to prevent freezing
+        setTimeout(aiLoop, 1000);
     }
 
-    function getNormalizedPixels() {
-        const size = Math.min(video.videoWidth, video.videoHeight);
-        const x = (video.videoWidth - size) / 2;
-        const y = (video.videoHeight - size) / 2;
-        
-        // Draw centered square crop (Fit to shortest axis)
-        ctx.drawImage(video, x, y, size, size, 0, 0, 160, 160);
-        
-        const data = ctx.getImageData(0, 0, 160, 160).data;
-        const normalized = new Float32Array(160 * 160 * 3);
-        
-        for (let i = 0; i < data.length / 4; i++) {
-            normalized[i * 3]     = data[i * 4] / 255.0;     // R
-            normalized[i * 3 + 1] = data[i * 4 + 1] / 255.0; // G
-            normalized[i * 3 + 2] = data[i * 4 + 2] / 255.0; // B
-        }
-        return Array.from(normalized);
-    }
-
-    function updateDisplay(results) {
+    function updateUI(results) {
         const sorted = results.sort((a, b) => b.value - a.value);
         const best = sorted.find(r => targets.includes(r.label));
         
-        const topDisplay = document.getElementById('top-result');
-        if (best && best.value > 0.25) {
-            topDisplay.innerText = `${best.label} (${(best.value * 100).toFixed(0)}%)`;
+        const topText = document.getElementById('top-result');
+        if (best && best.value > 0.3) {
+            topText.innerText = best.label + " (" + (best.value * 100).toFixed(0) + "%)";
             currentDetectedItem = best.label;
             document.getElementById('addBtn').style.display = 'block';
-            document.getElementById('addBtn').innerText = `➕ Add ${best.label}`;
+            document.getElementById('addBtn').innerText = "➕ Add " + best.label;
         } else {
-            topDisplay.innerText = "Scanning...";
+            topText.innerText = "Scanning...";
             currentDetectedItem = null;
             document.getElementById('addBtn').style.display = 'none';
         }
@@ -144,32 +129,24 @@
         let html = "";
         sorted.forEach(r => {
             const p = (r.value * 100).toFixed(0);
-            html += `<div>${r.label}: ${p}%<div class="bar-container">
-                    <div class="bar-fill" style="width:${p}%; background:${targets.includes(r.label)?'#007bff':'#999'}"></div>
-                    </div></div>`;
+            html += r.label + ": " + p + "% <div class='bar-container'><div class='bar-fill' style='width:" + p + "%'></div></div>";
         });
         document.getElementById('conf-list').innerHTML = html;
     }
 
-    document.getElementById('addBtn').onclick = () => sendRequest('add', currentDetectedItem);
+    document.getElementById('addBtn').onclick = () => sendToESP('add', currentDetectedItem);
     document.getElementById('removeBtn').onclick = () => {
         const item = currentDetectedItem || lastAddedItem;
-        if (item) sendRequest('remove', item);
-        else logDisplay.innerText = "Nothing to remove!";
+        if (item) sendToESP('remove', item);
     };
 
-    function sendRequest(action, label) {
+    function sendToESP(action, label) {
         const ip = document.getElementById('espIp').value;
-        if (!ip) return alert("Enter IP");
-        
-        logDisplay.innerText = `Sending ${action}...`;
+        if(!ip) return;
         const img = new Image();
-        img.src = `http://${ip}/${action}?label=${encodeURIComponent(label)}&t=${Date.now()}`;
-        img.onload = img.onerror = () => {
-            logDisplay.innerText = `${action === 'add' ? '✅' : '🗑️'} ${label}`;
-            if (action === 'add') lastAddedItem = label;
-            else if (lastAddedItem === label) lastAddedItem = null;
-        };
+        img.src = "http://" + ip + "/" + action + "?label=" + encodeURIComponent(label) + "&t=" + Date.now();
+        document.getElementById('log').innerText = "Action: " + action + " " + label;
+        if (action === 'add') lastAddedItem = label;
     }
 </script>
 </body>
