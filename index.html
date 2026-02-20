@@ -3,193 +3,172 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI - Stability Build</title>
+    <title>Smart Cart AI - High Stability</title>
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
-        .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        body { font-family: system-ui, -apple-system, sans-serif; text-align: center; background: #f4f7f9; margin: 0; padding: 15px; }
+        .container { max-width: 400px; margin: auto; background: white; padding: 20px; border-radius: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
         
-        /* Debug Canvas: Shows exactly what the AI sees (160x160) */
-        #debugCanvas { border: 2px solid #dc3545; border-radius: 10px; margin-top: 10px; background: #000; }
+        /* Smaller preview to save CPU power */
+        #webcam { width: 100%; border-radius: 15px; margin-bottom: 10px; border: 2px solid #007bff; background: #000; }
+        #debugCanvas { display: block; margin: 10px auto; border-radius: 8px; border: 1px solid #ccc; width: 120px; height: 120px; }
         
-        video { width: 100%; border-radius: 15px; margin: 15px 0; border: 3px solid #007bff; display: none; }
-        .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; min-height: 32px; }
-        .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 13px; }
-        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; }
+        .inference-display { font-size: 22px; font-weight: 700; color: #007bff; margin: 10px 0; }
+        .confidence-list { text-align: left; font-family: ui-monospace, monospace; background: #f8f9fa; padding: 12px; border-radius: 12px; font-size: 12px; }
         
-        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; }
+        button { width: 100%; padding: 16px; background: #007bff; color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; margin-bottom: 8px; }
         .btn-add { background: #28a745; display: none; }
         .btn-remove { background: #dc3545; }
         
-        #log { color: #28a745; font-weight: bold; margin-top: 10px; }
-        .bar-container { background: #ddd; height: 8px; border-radius: 4px; margin-top: 4px; margin-bottom: 8px; overflow: hidden; }
-        .bar-fill { background: #007bff; height: 100%; transition: width 0.1s; }
+        input { width: 100%; box-sizing: border-box; padding: 12px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 10px; }
+        .bar-container { background: #eee; height: 6px; border-radius: 3px; margin: 4px 0 8px 0; overflow: hidden; }
+        .bar-fill { background: #007bff; height: 100%; transition: width 0.3s ease; }
+        #log { font-weight: 600; margin-top: 10px; font-size: 14px; min-height: 1.2em; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>🛒 Smart Cart AI</h2>
+    <h3 style="margin-top:0">🛒 Smart Cart AI</h3>
     <input type="text" id="espIp" placeholder="ESP32 IP (e.g. 192.168.1.50)">
-    <button id="startBtn">Initialize AI Scanner</button>
+    <button id="startBtn">Enable Scanner</button>
     
     <video id="webcam" autoplay muted playsinline></video>
-    <p>AI Input Feed (160x160):</p>
     <canvas id="debugCanvas" width="160" height="160"></canvas>
     
-    <div id="top-result" class="inference-display">Ready...</div>
+    <div id="top-result" class="inference-display">Paused</div>
     
-    <div style="margin: 20px 0; border-top: 2px solid #eee; padding-top: 15px;">
-        <button id="addBtn" class="btn-add">➕ Add Item</button>
-        <button id="removeBtn" class="btn-remove">🗑️ Remove Item</button>
-    </div>
+    <button id="addBtn" class="btn-add">➕ Add Detected Item</button>
+    <button id="removeBtn" class="btn-remove">🗑️ Remove Item</button>
 
     <div id="conf-list" class="confidence-list"></div>
-    <div id="log">Last Action: None</div>
+    <div id="log">Status: Waiting</div>
 </div>
 
 <script>
     let classifier;
     let currentDetectedItem = null;
     let lastAddedItem = null; 
-    let isProcessing = false; // Flag to prevent overlapping AI runs
+    let busy = false;
     const targets = ["Sun stick", "Clay stick", "Grips", "Lighter"];
 
-    const addBtn = document.getElementById('addBtn');
-    const removeBtn = document.getElementById('removeBtn');
-    const logDisplay = document.getElementById('log');
     const video = document.getElementById('webcam');
     const debugCanvas = document.getElementById('debugCanvas');
-    const debugCtx = debugCanvas.getContext('2d', { alpha: false });
+    const ctx = debugCanvas.getContext('2d', { alpha: false });
+    const logDisplay = document.getElementById('log');
 
-    document.getElementById('startBtn').onclick = async () => {
-        document.getElementById('startBtn').style.display = 'none';
+    document.getElementById('startBtn').onclick = async function() {
+        this.style.display = 'none';
         await initAI();
     };
 
     async function initAI() {
-        const statusDisplay = document.getElementById('top-result');
         try {
-            statusDisplay.innerText = "Loading Model...";
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
-            const props = classifier.getProperties(); 
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: 640, height: 480 } 
+                video: { facingMode: "environment", width: 320, height: 240 } // Lower resolution video to save lag
             });
             
             video.srcObject = stream;
             video.onloadedmetadata = () => {
                 video.play();
-                statusDisplay.innerText = "Scanning...";
-                requestAnimationFrame(predictLoop); // Start the stable loop
+                requestAnimationFrame(loop);
             };
-        } catch (e) { 
-            statusDisplay.innerText = "AI Error!";
+        } catch (e) {
+            document.getElementById('top-result').innerText = "Camera Error";
             console.error(e);
         }
     }
 
-    async function predictLoop() {
-        if (!isProcessing && video.readyState === 4) {
-            isProcessing = true;
+    async function loop() {
+        if (!busy && video.readyState === 4) {
+            busy = true;
             try {
-                const props = classifier.getProperties();
-                const imgData = getPixelData(video, props.input_width, props.input_height);
-                const result = await classifier.classify(imgData);
+                // 1. Pre-process frame (Center Crop + Resize)
+                const pixels = getNormalizedPixels();
                 
+                // 2. Run AI
+                const result = await classifier.classify(pixels);
+                
+                // 3. Update UI
                 if (result.results) {
-                    updateUI(result.results);
-                    checkDetection(result.results);
+                    updateDisplay(result.results);
                 }
             } catch (err) {
-                console.error("Classification failed:", err);
+                console.error(err);
             }
-            isProcessing = false;
+            // Give the CPU a 200ms rest between AI scans to stop the lag
+            setTimeout(() => { busy = false; }, 200);
         }
-        // Wait 100ms before next frame to keep UI responsive
-        setTimeout(() => requestAnimationFrame(predictLoop), 100);
+        requestAnimationFrame(loop);
     }
 
-    function getPixelData(video, targetW, targetH) {
-        const videoW = video.videoWidth;
-        const videoH = video.videoHeight;
-        const shortestSide = Math.min(videoW, videoH);
-        const sourceX = (videoW - shortestSide) / 2;
-        const sourceY = (videoH - shortestSide) / 2;
+    function getNormalizedPixels() {
+        const size = Math.min(video.videoWidth, video.videoHeight);
+        const x = (video.videoWidth - size) / 2;
+        const y = (video.videoHeight - size) / 2;
         
-        // Fit to Shortest Axis (Center Crop)
-        debugCtx.drawImage(video, sourceX, sourceY, shortestSide, shortestSide, 0, 0, targetW, targetH);
+        // Draw centered square crop (Fit to shortest axis)
+        ctx.drawImage(video, x, y, size, size, 0, 0, 160, 160);
         
-        const imgData = debugCtx.getImageData(0, 0, targetW, targetH).data;
-        const pixels = new Float32Array(targetW * targetH * 3);
-
-        for (let i = 0; i < imgData.length / 4; i++) { 
-            pixels[i * 3] = imgData[i * 4] / 255.0;     // R
-            pixels[i * 3 + 1] = imgData[i * 4 + 1] / 255.0; // G
-            pixels[i * 3 + 2] = imgData[i * 4 + 2] / 255.0; // B
+        const data = ctx.getImageData(0, 0, 160, 160).data;
+        const normalized = new Float32Array(160 * 160 * 3);
+        
+        for (let i = 0; i < data.length / 4; i++) {
+            normalized[i * 3]     = data[i * 4] / 255.0;     // R
+            normalized[i * 3 + 1] = data[i * 4 + 1] / 255.0; // G
+            normalized[i * 3 + 2] = data[i * 4 + 2] / 255.0; // B
         }
-        return Array.from(pixels);
+        return Array.from(normalized);
     }
 
-    function updateUI(classifications) {
-        const filtered = classifications
-            .filter(res => targets.includes(res.label))
-            .sort((a, b) => b.value - a.value);
-            
-        const topItem = filtered[0];
-        const statusDisplay = document.getElementById('top-result');
+    function updateDisplay(results) {
+        const sorted = results.sort((a, b) => b.value - a.value);
+        const best = sorted.find(r => targets.includes(r.label));
         
-        if (topItem && topItem.value > 0.20) {
-             statusDisplay.innerText = `${topItem.label} (${(topItem.value * 100).toFixed(0)}%)`;
+        const topDisplay = document.getElementById('top-result');
+        if (best && best.value > 0.25) {
+            topDisplay.innerText = `${best.label} (${(best.value * 100).toFixed(0)}%)`;
+            currentDetectedItem = best.label;
+            document.getElementById('addBtn').style.display = 'block';
+            document.getElementById('addBtn').innerText = `➕ Add ${best.label}`;
         } else {
-             statusDisplay.innerText = `Scanning...`;
-        }
-
-        let listHtml = "";
-        classifications.sort((a, b) => b.value - a.value).forEach(res => {
-            const percent = (res.value * 100).toFixed(0);
-            const isTarget = targets.includes(res.label);
-            listHtml += `<div><span>${res.label}: ${percent}%</span>
-                <div class="bar-container"><div class="bar-fill" style="width: ${percent}%; background: ${isTarget ? "#007bff" : "#6c757d"};"></div></div></div>`;
-        });
-        document.getElementById('conf-list').innerHTML = listHtml;
-    }
-
-    function checkDetection(classifications) {
-        const bestItem = classifications
-            .filter(res => targets.includes(res.label))
-            .sort((a, b) => b.value - a.value)[0];
-
-        if (bestItem && bestItem.value > 0.40) {
-            currentDetectedItem = bestItem.label;
-            addBtn.style.display = 'block';
-            addBtn.innerText = `➕ Add ${bestItem.label}`;
-            removeBtn.innerText = `🗑️ Remove ${bestItem.label}`;
-        } else {
+            topDisplay.innerText = "Scanning...";
             currentDetectedItem = null;
-            addBtn.style.display = 'none';
-            removeBtn.innerText = lastAddedItem ? `🗑️ Remove Last (${lastAddedItem})` : `🗑️ Remove Item`;
+            document.getElementById('addBtn').style.display = 'none';
         }
+
+        let html = "";
+        sorted.forEach(r => {
+            const p = (r.value * 100).toFixed(0);
+            html += `<div>${r.label}: ${p}%<div class="bar-container">
+                    <div class="bar-fill" style="width:${p}%; background:${targets.includes(r.label)?'#007bff':'#999'}"></div>
+                    </div></div>`;
+        });
+        document.getElementById('conf-list').innerHTML = html;
     }
 
-    addBtn.onclick = () => { if (currentDetectedItem) sendToCart(currentDetectedItem, 'add'); };
-    removeBtn.onclick = () => {
-        const itemToRemove = currentDetectedItem || lastAddedItem;
-        if (itemToRemove) sendToCart(itemToRemove, 'remove');
+    document.getElementById('addBtn').onclick = () => sendRequest('add', currentDetectedItem);
+    document.getElementById('removeBtn').onclick = () => {
+        const item = currentDetectedItem || lastAddedItem;
+        if (item) sendRequest('remove', item);
+        else logDisplay.innerText = "Nothing to remove!";
     };
 
-    function sendToCart(itemName, action) {
+    function sendRequest(action, label) {
         const ip = document.getElementById('espIp').value;
-        if (!ip) return;
+        if (!ip) return alert("Enter IP");
+        
+        logDisplay.innerText = `Sending ${action}...`;
         const img = new Image();
-        img.src = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
+        img.src = `http://${ip}/${action}?label=${encodeURIComponent(label)}&t=${Date.now()}`;
         img.onload = img.onerror = () => {
-            logDisplay.innerText = (action === 'add' ? "✅ Added: " : "🗑️ Removed: ") + itemName;
-            if (action === 'add') lastAddedItem = itemName;
-            else if (lastAddedItem === itemName) lastAddedItem = null;
+            logDisplay.innerText = `${action === 'add' ? '✅' : '🗑️'} ${label}`;
+            if (action === 'add') lastAddedItem = label;
+            else if (lastAddedItem === label) lastAddedItem = null;
         };
     }
 </script>
