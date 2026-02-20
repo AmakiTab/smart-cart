@@ -3,136 +3,170 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI - Diagnostic Mode</title>
-   <script src="edge-impulse-standalone.js"></script>
-<script src="run-impulse.js"></script>
+    <title>Smart Cart AI - Pro Edition</title>
+    <script src="edge-impulse-standalone.js"></script>
+    <script src="run-impulse.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; padding: 15px; }
-        .container { max-width: 400px; margin: auto; background: #2d2d2d; padding: 20px; border-radius: 20px; }
-        #video-wrap { position: relative; border: 2px solid #444; border-radius: 12px; overflow: hidden; height: 250px; }
-        video { width: 100%; height: 100%; object-fit: cover; }
+        body { font-family: system-ui, sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 20px; }
+        .container { max-width: 400px; margin: auto; background: #1e1e1e; padding: 20px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         
-        /* DIAGNOSTIC HEARTBEAT */
-        #heartbeat { position: absolute; top: 10px; right: 10px; width: 15px; height: 15px; background: grey; border-radius: 50%; border: 2px solid white; }
-        .active-pulse { background: #00ff00 !important; box-shadow: 0 0 10px #00ff00; }
+        #video-wrap { position: relative; width: 100%; border-radius: 15px; overflow: hidden; border: 2px solid #333; line-height: 0; }
+        video { width: 100%; height: auto; }
+        
+        /* The Pulse Dot */
+        #heartbeat { position: absolute; top: 10px; right: 10px; width: 12px; height: 12px; background: #444; border-radius: 50%; border: 2px solid #fff; transition: background 0.1s; }
+        .pulse-on { background: #00ff00 !important; box-shadow: 0 0 10px #00ff00; }
 
-        .inference-display { font-size: 24px; color: #007bff; margin: 15px 0; font-weight: bold; }
-        .conf-list { text-align: left; background: #3d3d3d; padding: 15px; border-radius: 10px; font-family: monospace; font-size: 13px; }
-        .bar-bg { background: #555; height: 10px; border-radius: 5px; margin: 5px 0 10px 0; }
-        .bar-fill { background: #007bff; height: 100%; width: 0%; transition: width 0.1s; }
-        button { width: 100%; padding: 15px; margin: 5px 0; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; }
+        .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 20px 0; min-height: 1.2em; }
+        .conf-list { text-align: left; background: #2a2a2a; padding: 15px; border-radius: 12px; font-family: monospace; }
+        
+        .bar-container { background: #444; height: 8px; border-radius: 4px; margin: 5px 0 12px 0; overflow: hidden; }
+        .bar-fill { background: #007bff; height: 100%; width: 0%; transition: width 0.2s; }
+        
+        button { width: 100%; padding: 16px; border-radius: 12px; border: none; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 10px; }
         #startBtn { background: #007bff; color: white; }
         #addBtn { background: #28a745; color: white; display: none; }
+        
+        input { width: 100%; box-sizing: border-box; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #444; background: #2a2a2a; color: white; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>AI DIAGNOSTIC</h2>
-    <input type="text" id="espIp" placeholder="ESP32 IP" style="width:90%; padding:10px; margin-bottom:10px; border-radius:5px;">
-    <button id="startBtn">START AI ENGINE</button>
+    <h2>🛒 Smart Cart AI</h2>
+    <input type="text" id="espIp" placeholder="ESP32 IP (e.g., 192.168.1.50)">
+    <button id="startBtn">START SYSTEM</button>
 
     <div id="video-wrap">
         <video id="webcam" autoplay muted playsinline></video>
-        <div id="heartbeat" title="AI Status (Green = Working)"></div>
+        <div id="heartbeat"></div>
     </div>
 
-    <div id="top-result" class="inference-display">ENGINE OFF</div>
+    <div id="top-result" class="inference-display">SYSTEM IDLE</div>
     
-    <button id="addBtn">ADD ITEM</button>
+    <button id="addBtn">➕ ADD TO CART</button>
 
-    <div id="conf-list" class="conf-list">
-        AI Results will appear here...
-    </div>
+    <div id="conf-list" class="conf-list">Results will appear here...</div>
 </div>
 
 <canvas id="hiddenCanvas" width="160" height="160" style="display:none;"></canvas>
 
 <script>
     let classifier;
+    let currentItem = null;
     const targets = ["Clay stick", "Sun stick", "Lighter", "Grips"];
-    const heartbeat = document.getElementById('heartbeat');
-    const topResult = document.getElementById('top-result');
-    const video = document.getElementById('webcam');
 
-    document.getElementById('startBtn').onclick = async function() {
-        this.innerText = "LOADING WASM...";
+    const startBtn = document.getElementById('startBtn');
+    const topDisplay = document.getElementById('top-result');
+    const heartbeat = document.getElementById('heartbeat');
+
+    startBtn.onclick = async () => {
+        startBtn.style.display = 'none';
+        initAI();
+    };
+
+    async function initAI() {
         try {
+            topDisplay.innerText = "Loading AI...";
+            
+            // 1. Initialize the Edge Impulse Classifier
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
+            // 2. Setup Camera
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" } 
+                video: { facingMode: "environment", width: 640, height: 480 } 
             });
-            video.srcObject = stream;
+            document.getElementById('webcam').srcObject = stream;
             
-            video.onloadeddata = () => {
-                this.style.display = 'none';
-                topResult.innerText = "SCANNING...";
-                loop();
-            };
+            topDisplay.innerText = "Scanning...";
+            startLoop();
         } catch (e) {
-            topResult.innerText = "INIT FAILED";
-            alert("Model Error: " + e.message);
+            console.error(e);
+            topDisplay.innerText = "Engine Error";
         }
-    };
+    }
 
-    async function loop() {
-        // Heartbeat Blink (Visual proof that code is running)
-        heartbeat.classList.toggle('active-pulse');
+    async function startLoop() {
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('hiddenCanvas');
+        const ctx = canvas.getContext('2d');
 
-        try {
-            const canvas = document.getElementById('hiddenCanvas');
-            const ctx = canvas.getContext('2d');
-            
-            // 1. Capture frame
-            ctx.drawImage(video, 0, 0, 160, 160);
-            
-            // 2. Get Raw Pixels
-            const imgData = ctx.getImageData(0, 0, 160, 160).data;
-            const pixels = [];
-            for (let i = 0; i < imgData.length; i += 4) {
-                pixels.push(imgData[i] / 255);
-                pixels.push(imgData[i+1] / 255);
-                pixels.push(imgData[i+2] / 255);
+        while (true) {
+            if (video.readyState === 4) {
+                // Heartbeat Pulse
+                heartbeat.classList.toggle('pulse-on');
+
+                // 1. Snapshot the frame
+                ctx.drawImage(video, 0, 0, 160, 160);
+                const imgData = ctx.getImageData(0, 0, 160, 160).data;
+                
+                // 2. Format for your specific run-impulse.js
+                const pixels = new Float32Array(160 * 160 * 3);
+                for (let i = 0; i < 160 * 160; i++) {
+                    pixels[i * 3]     = imgData[i * 4]     / 255.0; // R
+                    pixels[i * 3 + 1] = imgData[i * 4 + 1] / 255.0; // G
+                    pixels[i * 3 + 2] = imgData[i * 4 + 2] / 255.0; // B
+                }
+
+                try {
+                    // 3. Run Inference
+                    const result = await classifier.classify(Array.from(pixels));
+                    if (result.results) {
+                        updateUI(result.results);
+                    }
+                } catch (err) {
+                    console.log("Classify error:", err);
+                }
             }
-
-            // 3. Inference
-            const result = await classifier.classify(pixels);
-            
-            if (result.results) {
-                updateUI(result.results);
-            }
-        } catch (err) {
-            console.error("AI Loop Error:", err);
-            topResult.innerText = "LOOP CRASHED";
+            // 200ms delay to keep it smooth and prevent browser freezing
+            await new Promise(r => setTimeout(r, 200));
         }
-
-        // Run again in 300ms
-        setTimeout(loop, 300);
     }
 
     function updateUI(results) {
-        let html = "";
-        const sorted = results.sort((a,b) => b.value - a.value);
-        
-        // Show Top Result
+        const sorted = results.sort((a, b) => b.value - a.value);
         const best = sorted[0];
-        topResult.innerText = `${best.label}: ${(best.value * 100).toFixed(0)}%`;
+        const addBtn = document.getElementById('addBtn');
 
-        if (targets.includes(best.label) && best.value > 0.4) {
-            document.getElementById('addBtn').style.display = 'block';
+        // Update Top Result Display
+        if (best.value > 0.3) {
+            topDisplay.innerText = `${best.label} (${(best.value * 100).toFixed(0)}%)`;
+            currentItem = best.label;
+            
+            if(targets.includes(best.label)) {
+                addBtn.style.display = 'block';
+                addBtn.innerText = `➕ ADD ${best.label.toUpperCase()}`;
+            } else {
+                addBtn.style.display = 'none';
+            }
         } else {
-            document.getElementById('addBtn').style.display = 'none';
+            topDisplay.innerText = "Scanning...";
+            addBtn.style.display = 'none';
         }
 
-        results.forEach(r => {
+        // Update Confidence List
+        let html = "";
+        sorted.forEach(r => {
             const p = (r.value * 100).toFixed(0);
-            html += `<div>${r.label} (${p}%)</div>
-                     <div class="bar-bg"><div class="bar-fill" style="width:${p}%"></div></div>`;
+            html += `<div>${r.label}: ${p}%</div>
+                    <div class="bar-container">
+                        <div class="bar-fill" style="width: ${p}%"></div>
+                    </div>`;
         });
         document.getElementById('conf-list').innerHTML = html;
     }
+
+    // ESP32 Communication
+    document.getElementById('addBtn').onclick = () => {
+        const ip = document.getElementById('espIp').value;
+        if (!ip) return alert("Enter ESP32 IP!");
+        
+        const img = new Image();
+        img.src = `http://${ip}/add?label=${encodeURIComponent(currentItem)}&t=${Date.now()}`;
+        alert(`Sent ${currentItem} to Cart!`);
+    };
 </script>
+
 </body>
 </html>
