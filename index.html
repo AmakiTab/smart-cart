@@ -3,27 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI Scanner - V2</title>
+    <title>Smart Cart AI - 160x160 RGB</title>
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
         .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        video { width: 100%; border-radius: 15px; margin: 15px 0; display: none; border: 3px solid #007bff; background: #000; }
-        .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; min-height: 32px; }
-        .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 14px; line-height: 1.6; }
-        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 16px; outline: none; }
-        input:focus { border-color: #007bff; }
         
-        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; transition: 0.2s; }
-        button:active { transform: scale(0.98); background: #0056b3; }
-        .btn-add { background: #28a745; display: none; margin-top: 10px; }
+        /* Debug Canvas - Hidden by default, show it to see what the AI sees */
+        #debugCanvas { border: 2px solid #dc3545; border-radius: 10px; margin-top: 10px; display: none; }
+        
+        video { width: 100%; border-radius: 15px; margin: 15px 0; border: 3px solid #007bff; background: #000; }
+        .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; min-height: 32px; }
+        .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 13px; line-height: 1.4; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 16px; }
+        
+        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; }
+        button:active { transform: scale(0.98); }
+        .btn-add { background: #28a745; display: none; }
         .btn-remove { background: #dc3545; }
         
         #log { color: #28a745; font-weight: bold; margin-top: 10px; height: 20px; }
         .bar-container { background: #ddd; height: 8px; border-radius: 4px; margin-top: 4px; margin-bottom: 8px; overflow: hidden; }
         .bar-fill { background: #007bff; height: 100%; transition: width 0.2s; }
-        .action-area { margin: 20px 0; padding-top: 10px; border-top: 2px solid #eee; }
     </style>
 </head>
 <body>
@@ -31,13 +33,15 @@
 <div class="container">
     <h2>🛒 Smart Cart AI</h2>
     <input type="text" id="espIp" placeholder="ESP32 IP (e.g. 192.168.1.50)">
-    <button id="startBtn">Initialize AI Scanner</button>
+    <button id="startBtn">Start AI Camera</button>
     
-    <video id="webcam" autoplay muted playsinline></video>
+    <video id="webcam" autoplay muted playsinline style="display:none;"></video>
+    <canvas id="debugCanvas" width="160" height="160"></canvas>
+    
     <div id="top-result" class="inference-display">Ready...</div>
     
-    <div class="action-area">
-        <button id="addBtn" class="btn-add">➕ Add Detected Item</button>
+    <div style="margin: 20px 0; border-top: 2px solid #eee; padding-top: 15px;">
+        <button id="addBtn" class="btn-add">➕ Add Item</button>
         <button id="removeBtn" class="btn-remove">🔄 Remove Item</button>
     </div>
 
@@ -50,33 +54,19 @@
     let currentDetectedItem = null;
     let lastAddedItem = null; 
 
-    // Updated Targets (Excluding Background)
+    // YOUR LABELS
     const targets = ["Sun stick", "Clay stick", "Grips", "Lighter"];
 
     const addBtn = document.getElementById('addBtn');
     const removeBtn = document.getElementById('removeBtn');
     const logDisplay = document.getElementById('log');
+    const video = document.getElementById('webcam');
+    const debugCanvas = document.getElementById('debugCanvas');
 
     document.getElementById('startBtn').onclick = async () => {
         document.getElementById('startBtn').style.display = 'none';
+        video.style.display = 'block';
         await initAI();
-    };
-
-    addBtn.onclick = () => { 
-        if (currentDetectedItem) {
-            sendToCart(currentDetectedItem, 'add'); 
-        } 
-    };
-
-    removeBtn.onclick = () => {
-        if (currentDetectedItem) {
-            sendToCart(currentDetectedItem, 'remove');
-        } else if (lastAddedItem) {
-            sendToCart(lastAddedItem, 'remove');
-        } else {
-            logDisplay.innerText = "Nothing to remove!"; 
-            logDisplay.style.color = "#dc3545"; 
-        }
     };
 
     async function initAI() {
@@ -86,22 +76,19 @@
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
-            // Your model is 160x160 RGB
             const props = classifier.getProperties(); 
-            const video = document.getElementById('webcam');
             
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } } 
             });
             
             video.srcObject = stream;
-            video.style.display = 'block';
 
             video.onloadedmetadata = () => {
                 video.play();
                 statusDisplay.innerText = "Scanning...";
+                // Run inference every 600ms
                 setInterval(async () => {
-                    // This uses the 160x160 resolution defined in your Impulse
                     const imgData = getPixelData(video, props.input_width, props.input_height);
                     const result = await classifier.classify(imgData);
                     if (result.results) {
@@ -111,36 +98,45 @@
                 }, 600);
             };
         } catch (e) { 
-            statusDisplay.innerText = "AI Error: Check Console";
+            statusDisplay.innerText = "AI Error!";
             console.error(e);
         }
     }
 
-    // Capture and crop to center for the 160x160 RGB input
+    /**
+     * CRITICAL: Image Preprocessing
+     * 1. Center-crops the video to a square.
+     * 2. Resizes to 160x160.
+     * 3. NORMALIZES pixels to 0.0 - 1.0 (Required for Transfer Learning).
+     */
     function getPixelData(video, targetW, targetH) {
-        const canvas = document.createElement('canvas');
-        canvas.width = targetW; 
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
+        const ctx = debugCanvas.getContext('2d');
         
-        // Square crop logic
-        const size = Math.min(video.videoWidth, video.videoHeight);
-        const xOffset = (video.videoWidth - size) / 2;
-        const yOffset = (video.videoHeight - size) / 2;
+        // Find square dimensions
+        const videoW = video.videoWidth;
+        const videoH = video.videoHeight;
+        const size = Math.min(videoW, videoH);
+        const xOffset = (videoW - size) / 2;
+        const yOffset = (videoH - size) / 2;
         
+        // Draw the cropped video frame to our hidden 160x160 canvas
         ctx.drawImage(video, xOffset, yOffset, size, size, 0, 0, targetW, targetH);
         
-        const img = ctx.getImageData(0, 0, targetW, targetH).data;
+        // Get raw RGBA data
+        const imgData = ctx.getImageData(0, 0, targetW, targetH).data;
         const pixels = [];
-        // RGB logic (skipping the alpha channel)
-        for (let i = 0; i < img.length; i += 4) { 
-            pixels.push(img[i], img[i+1], img[i+2]); 
+
+        for (let i = 0; i < imgData.length; i += 4) { 
+            // Normalize: Convert 0-255 to 0.0-1.0
+            // If your model specifically used -1 to 1, use: (imgData[i] / 127.5) - 1
+            pixels.push(imgData[i] / 255.0);     // Red
+            pixels.push(imgData[i+1] / 255.0);   // Green
+            pixels.push(imgData[i+2] / 255.0);   // Blue
         }
         return pixels;
     }
 
     function updateUI(classifications) {
-        // Find the highest confidence result that ISN'T "Background"
         const filtered = classifications
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value);
@@ -148,14 +144,14 @@
         const topItem = filtered[0];
         const statusDisplay = document.getElementById('top-result');
         
+        // Threshold for display
         if (topItem && topItem.value > 0.15) {
              statusDisplay.innerText = `${topItem.label} (${(topItem.value * 100).toFixed(0)}%)`;
         } else {
-             statusDisplay.innerText = `Searching...`;
+             statusDisplay.innerText = `Scanning...`;
         }
 
         let listHtml = "";
-        // Show all including Background in the small list for debugging
         classifications.sort((a, b) => b.value - a.value).forEach(res => {
             const percent = (res.value * 100).toFixed(0);
             const isTarget = targets.includes(res.label);
@@ -170,8 +166,8 @@
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value)[0];
 
-        // Trigger buttons if confidence > 20% and it's not background
-        if (bestItem && bestItem.value > 0.20) {
+        // If a target is detected at > 30% confidence
+        if (bestItem && bestItem.value > 0.30) {
             currentDetectedItem = bestItem.label;
             addBtn.style.display = 'block';
             addBtn.innerText = `➕ Add ${bestItem.label}`;
@@ -183,16 +179,24 @@
         }
     }
 
+    addBtn.onclick = () => { if (currentDetectedItem) sendToCart(currentDetectedItem, 'add'); };
+    removeBtn.onclick = () => {
+        const itemToRemove = currentDetectedItem || lastAddedItem;
+        if (itemToRemove) {
+            sendToCart(itemToRemove, 'remove');
+        } else {
+            logDisplay.innerText = "No item found!";
+            logDisplay.style.color = "red";
+        }
+    };
+
     function sendToCart(itemName, action) {
         const ip = document.getElementById('espIp').value;
-        if (!ip) { alert("Please enter ESP32 IP first!"); return; }
+        if (!ip) { alert("Enter ESP32 IP!"); return; }
 
-        logDisplay.style.color = "#007bff";
-        logDisplay.innerText = "Sending request...";
-        
+        logDisplay.innerText = "Processing...";
         const img = new Image();
-        const url = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
-        img.src = url;
+        img.src = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
         
         img.onload = img.onerror = () => {
             if (action === 'add') {
