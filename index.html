@@ -3,19 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI Scanner</title>
+    <title>Smart Cart AI Scanner - V2</title>
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
         .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        video { width: 100%; border-radius: 15px; margin: 15px 0; display: none; border: 3px solid #007bff; }
+        video { width: 100%; border-radius: 15px; margin: 15px 0; display: none; border: 3px solid #007bff; background: #000; }
         .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; min-height: 32px; }
         .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 14px; line-height: 1.6; }
-        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 16px; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 16px; outline: none; }
+        input:focus { border-color: #007bff; }
         
-        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; }
-        button:active { background: #0056b3; }
+        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; margin-bottom: 10px; transition: 0.2s; }
+        button:active { transform: scale(0.98); background: #0056b3; }
         .btn-add { background: #28a745; display: none; margin-top: 10px; }
         .btn-remove { background: #dc3545; }
         
@@ -29,8 +30,8 @@
 
 <div class="container">
     <h2>🛒 Smart Cart AI</h2>
-    <input type="text" id="espIp" placeholder="Enter ESP32 IP (e.g. 192.168.1.50)">
-    <button id="startBtn">Start Inferencing...</button>
+    <input type="text" id="espIp" placeholder="ESP32 IP (e.g. 192.168.1.50)">
+    <button id="startBtn">Initialize AI Scanner</button>
     
     <video id="webcam" autoplay muted playsinline></video>
     <div id="top-result" class="inference-display">Ready...</div>
@@ -48,7 +49,9 @@
     let classifier;
     let currentDetectedItem = null;
     let lastAddedItem = null; 
-    const targets = ["Deodorant", "Grips", "Hot sauce", "Power bank"];
+
+    // Updated Targets (Excluding Background)
+    const targets = ["Sun stick", "Clay stick", "Grips", "Lighter"];
 
     const addBtn = document.getElementById('addBtn');
     const removeBtn = document.getElementById('removeBtn');
@@ -59,22 +62,19 @@
         await initAI();
     };
 
-    // ADD: Sends the currently seen item to the ESP32
     addBtn.onclick = () => { 
         if (currentDetectedItem) {
             sendToCart(currentDetectedItem, 'add'); 
         } 
     };
 
-    // REMOVE: Sends the currently seen item (or last added) to the ESP32 to subtract price
     removeBtn.onclick = () => {
         if (currentDetectedItem) {
             sendToCart(currentDetectedItem, 'remove');
         } else if (lastAddedItem) {
-            // Fallback to last added if camera doesn't see anything right now
             sendToCart(lastAddedItem, 'remove');
         } else {
-            logDisplay.innerText = "No item detected to remove!"; 
+            logDisplay.innerText = "Nothing to remove!"; 
             logDisplay.style.color = "#dc3545"; 
         }
     };
@@ -82,12 +82,14 @@
     async function initAI() {
         const statusDisplay = document.getElementById('top-result');
         try {
-            statusDisplay.innerText = "Loading AI...";
+            statusDisplay.innerText = "Loading Model...";
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
-            const props = classifier.getProperties();
+            // Your model is 160x160 RGB
+            const props = classifier.getProperties(); 
             const video = document.getElementById('webcam');
+            
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } } 
             });
@@ -97,8 +99,9 @@
 
             video.onloadedmetadata = () => {
                 video.play();
-                statusDisplay.innerText = "Searching...";
+                statusDisplay.innerText = "Scanning...";
                 setInterval(async () => {
+                    // This uses the 160x160 resolution defined in your Impulse
                     const imgData = getPixelData(video, props.input_width, props.input_height);
                     const result = await classifier.classify(imgData);
                     if (result.results) {
@@ -107,37 +110,52 @@
                     }
                 }, 600);
             };
-        } catch (e) { statusDisplay.innerText = "AI Error: " + e.message; }
+        } catch (e) { 
+            statusDisplay.innerText = "AI Error: Check Console";
+            console.error(e);
+        }
     }
 
+    // Capture and crop to center for the 160x160 RGB input
     function getPixelData(video, targetW, targetH) {
         const canvas = document.createElement('canvas');
-        canvas.width = targetW; canvas.height = targetH;
+        canvas.width = targetW; 
+        canvas.height = targetH;
         const ctx = canvas.getContext('2d');
+        
+        // Square crop logic
         const size = Math.min(video.videoWidth, video.videoHeight);
         const xOffset = (video.videoWidth - size) / 2;
         const yOffset = (video.videoHeight - size) / 2;
+        
         ctx.drawImage(video, xOffset, yOffset, size, size, 0, 0, targetW, targetH);
+        
         const img = ctx.getImageData(0, 0, targetW, targetH).data;
         const pixels = [];
-        for (let i = 0; i < img.length; i += 4) { pixels.push(img[i], img[i+1], img[i+2]); }
+        // RGB logic (skipping the alpha channel)
+        for (let i = 0; i < img.length; i += 4) { 
+            pixels.push(img[i], img[i+1], img[i+2]); 
+        }
         return pixels;
     }
 
     function updateUI(classifications) {
-        const itemResults = classifications
+        // Find the highest confidence result that ISN'T "Background"
+        const filtered = classifications
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value);
             
-        const topItem = itemResults[0];
+        const topItem = filtered[0];
+        const statusDisplay = document.getElementById('top-result');
         
-        if (topItem && topItem.value > 0.05) {
-             document.getElementById('top-result').innerText = `${topItem.label} (${(topItem.value * 100).toFixed(0)}%)`;
+        if (topItem && topItem.value > 0.15) {
+             statusDisplay.innerText = `${topItem.label} (${(topItem.value * 100).toFixed(0)}%)`;
         } else {
-             document.getElementById('top-result').innerText = `Searching...`;
+             statusDisplay.innerText = `Searching...`;
         }
 
         let listHtml = "";
+        // Show all including Background in the small list for debugging
         classifications.sort((a, b) => b.value - a.value).forEach(res => {
             const percent = (res.value * 100).toFixed(0);
             const isTarget = targets.includes(res.label);
@@ -152,8 +170,8 @@
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value)[0];
 
-        // If the item is detected with more than 10% confidence
-        if (bestItem && bestItem.value > 0.1) {
+        // Trigger buttons if confidence > 20% and it's not background
+        if (bestItem && bestItem.value > 0.20) {
             currentDetectedItem = bestItem.label;
             addBtn.style.display = 'block';
             addBtn.innerText = `➕ Add ${bestItem.label}`;
@@ -161,7 +179,7 @@
         } else {
             currentDetectedItem = null;
             addBtn.style.display = 'none';
-            removeBtn.innerText = `🔄 Remove Last Item`;
+            removeBtn.innerText = lastAddedItem ? `🔄 Remove Last (${lastAddedItem})` : `🔄 Remove Item`;
         }
     }
 
@@ -169,19 +187,21 @@
         const ip = document.getElementById('espIp').value;
         if (!ip) { alert("Please enter ESP32 IP first!"); return; }
 
-        logDisplay.style.color = action === 'add' ? "#28a745" : "#dc3545";
-        logDisplay.innerText = (action === 'add' ? "Adding " : "Removing ") + itemName + "...";
+        logDisplay.style.color = "#007bff";
+        logDisplay.innerText = "Sending request...";
         
-        // Use an Image object to trigger the GET request to the ESP32 (avoids CORS issues)
         const img = new Image();
-        img.src = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
+        const url = `http://${ip}/${action}?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
+        img.src = url;
         
         img.onload = img.onerror = () => {
             if (action === 'add') {
                 logDisplay.innerText = "✅ Added: " + itemName;
+                logDisplay.style.color = "#28a745";
                 lastAddedItem = itemName;
             } else {
                 logDisplay.innerText = "🗑️ Removed: " + itemName;
+                logDisplay.style.color = "#dc3545";
                 if (lastAddedItem === itemName) lastAddedItem = null;
             }
         };
