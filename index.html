@@ -9,12 +9,13 @@
     <style>
         body { font-family: sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 20px; }
         .container { max-width: 450px; margin: auto; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        video { width: 100%; border-radius: 15px; margin: 15px 0; display: none; border: 3px solid #007bff; }
-        .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; }
+        video { width: 100%; border-radius: 15px; margin: 15px 0; display: none; border: 3px solid #007bff; transform: scaleX(1); }
+        .inference-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; min-height: 32px; }
         .confidence-list { text-align: left; font-family: monospace; background: #e9ecef; padding: 15px; border-radius: 10px; font-size: 14px; line-height: 1.6; }
-        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; font-size: 16px; }
         button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; }
-        #log { color: #28a745; font-weight: bold; margin-top: 10px; }
+        button:active { background: #0056b3; }
+        #log { color: #28a745; font-weight: bold; margin-top: 10px; height: 20px; }
         .bar-container { background: #ddd; height: 8px; border-radius: 4px; margin-top: 4px; margin-bottom: 8px; overflow: hidden; }
         .bar-fill { background: #007bff; height: 100%; transition: width 0.2s; }
     </style>
@@ -28,7 +29,7 @@
     
     <video id="webcam" autoplay muted playsinline></video>
 
-    <div id="top-result" class="inference-display">Waiting...</div>
+    <div id="top-result" class="inference-display">Ready...</div>
     <div id="conf-list" class="confidence-list"></div>
     <div id="log">Last Scanned: None</div>
 </div>
@@ -44,32 +45,38 @@
     };
 
     async function initAI() {
+        const statusDisplay = document.getElementById('top-result');
         try {
-            // 1. Initialize your custom class from run-impulse.js
+            statusDisplay.innerText = "Loading AI...";
+            
             classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
-            // 2. Get model properties (like image width/height)
             const props = classifier.getProperties();
-            console.log("Model expects:", props.input_width, "x", props.input_height);
+            console.log("Model initialized:", props.input_width, "x", props.input_height);
 
-            // 3. Start the Camera
             const video = document.getElementById('webcam');
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: "environment",
+                    width: { ideal: 640 }, 
+                    height: { ideal: 480 }
+                } 
+            });
+            
             video.srcObject = stream;
             video.style.display = 'block';
 
             video.onloadedmetadata = () => {
                 video.play();
+                statusDisplay.innerText = "Searching...";
                 
-                // Inference Loop
                 setInterval(async () => {
                     if (!canScan) return;
 
-                    // Convert video frame to raw RGB array (Middleman)
+                    // Center Crop logic to maintain aspect ratio
                     const imgData = getPixelData(video, props.input_width, props.input_height);
                     
-                    // Run Classification
                     const result = await classifier.classify(imgData);
                     
                     if (result.results) {
@@ -80,44 +87,62 @@
             };
         } catch (e) {
             console.error(e);
-            document.getElementById('top-result').innerText = "AI Error: " + e.message;
+            statusDisplay.innerText = "AI Error: " + e.message;
         }
     }
 
-    // Helper function to convert video to raw RGB data
-    function getPixelData(video, width, height) {
+    // Capture, Center-Crop, and Resize for 160x160 RGB
+    function getPixelData(video, targetW, targetH) {
         const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = targetW;
+        canvas.height = targetH;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, width, height);
+
+        const videoW = video.videoWidth;
+        const videoH = video.videoHeight;
+        const size = Math.min(videoW, videoH);
+        const xOffset = (videoW - size) / 2;
+        const yOffset = (videoH - size) / 2;
+
+        // Crop square from center, then draw to 160x160 canvas
+        ctx.drawImage(video, xOffset, yOffset, size, size, 0, 0, targetW, targetH);
         
-        const img = ctx.getImageData(0, 0, width, height).data;
+        const img = ctx.getImageData(0, 0, targetW, targetH).data;
         const pixels = [];
         for (let i = 0; i < img.length; i += 4) {
-            // Convert to RGB (ignoring Alpha channel)
+            // Push R, G, B values
             pixels.push(img[i], img[i+1], img[i+2]);
         }
         return pixels;
     }
 
     function updateUI(classifications) {
-        // Find top result for the main display
-        const sorted = [...classifications].sort((a, b) => b.value - a.value);
-        const top = sorted[0];
-        document.getElementById('top-result').innerText = `${top.label} (${(top.value * 100).toFixed(0)}%)`;
+        // Filter for target items to show in main header
+        const sortedTargets = classifications
+            .filter(res => targets.includes(res.label))
+            .sort((a, b) => b.value - a.value);
+            
+        const topOverall = [...classifications].sort((a, b) => b.value - a.value)[0];
+        
+        // Show target in main display if it's reasonably confident
+        if (sortedTargets.length > 0 && sortedTargets[0].value > 0.3) {
+             document.getElementById('top-result').innerText = `${sortedTargets[0].label} (${(sortedTargets[0].value * 100).toFixed(0)}%)`;
+        } else {
+             document.getElementById('top-result').innerText = `Searching...`;
+        }
 
-        // Render confidence list with progress bars
+        // Render full list with bars
         let listHtml = "";
-        classifications.forEach(res => {
+        const listSorted = [...classifications].sort((a, b) => b.value - a.value);
+        
+        listSorted.forEach(res => {
             const percent = (res.value * 100).toFixed(0);
             const isTarget = targets.includes(res.label);
-            const labelIcon = isTarget ? "★ " : "  ";
             const barColor = isTarget ? "#007bff" : "#6c757d";
 
             listHtml += `
                 <div>
-                    <span>${labelIcon}${res.label}: ${percent}%</span>
+                    <span>${res.label}: ${percent}%</span>
                     <div class="bar-container">
                         <div class="bar-fill" style="width: ${percent}%; background: ${barColor};"></div>
                     </div>
@@ -129,13 +154,12 @@
     function checkAndScan(classifications) {
         if (!canScan) return;
 
-        // Skip Background: Find the highest scoring item in our target list
         const bestItem = classifications
             .filter(res => targets.includes(res.label))
             .sort((a, b) => b.value - a.value)[0];
 
-        // Trigger if confidence is over 75%
-        if (bestItem && bestItem.value > 0.75) {
+        // Trigger if confidence is over 80%
+        if (bestItem && bestItem.value > 0.80) {
             sendToCart(bestItem.label);
         }
     }
@@ -147,14 +171,15 @@
         canScan = false;
         document.getElementById('log').innerText = "✅ SCANNED: " + itemName;
         
-        // Mode 'no-cors' allows hitting a local ESP32 IP from an HTTPS site
-        fetch(`http://${ip}/add?label=${encodeURIComponent(itemName)}`, { mode: 'no-cors' })
-            .finally(() => {
-                setTimeout(() => { 
-                    canScan = true; 
-                    document.getElementById('log').innerText = "Ready for next item...";
-                }, 3000); // 3-second cooldown
-            });
+        // Use an Image ping to bypass strict CORS/Handshake issues on mobile Safari
+        const img = new Image();
+        img.src = `http://${ip}/add?label=${encodeURIComponent(itemName)}&t=${Date.now()}`;
+        
+        // Reset scanner after 3 seconds
+        setTimeout(() => {
+            canScan = true; 
+            document.getElementById('log').innerText = "Ready for next item...";
+        }, 3000);
     }
 </script>
 </body>
