@@ -2,180 +2,173 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Cart AI - Updated Labels</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Cart AI - Pro Smooth</title>
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #f0f2f5; padding: 10px; margin: 0; }
-        .container { max-width: 400px; margin: auto; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        video { width: 100%; border-radius: 10px; background: #000; height: 200px; object-fit: cover; border: 2px solid #007bff; }
-        #debugCanvas { border: 1px solid red; margin: 10px auto; display: block; width: 160px; height: 160px; border-radius: 8px; }
-        .inference-display { font-size: 22px; font-weight: bold; color: #007bff; margin: 10px; min-height: 1.2em; }
-        .confidence-list { text-align: left; font-size: 12px; background: #eee; padding: 12px; border-radius: 10px; font-family: monospace; }
+        :root { --primary: #007bff; --success: #28a745; --danger: #dc3545; }
+        body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5; margin: 0; padding: 15px; overflow-x: hidden; }
+        .container { max-width: 420px; margin: auto; background: white; padding: 20px; border-radius: 24px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); }
+        h2 { margin-top: 0; font-size: 20px; color: #333; }
         
-        button { width: 100%; padding: 15px; margin: 5px 0; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        #startBtn { background: #007bff; color: white; }
-        .btn-add { background: #28a745; color: white; display: none; }
-        .btn-remove { background: #dc3545; color: white; }
+        #video-container { position: relative; width: 100%; border-radius: 16px; overflow: hidden; background: #000; line-height: 0; border: 3px solid var(--primary); }
+        video { width: 100%; height: auto; }
         
-        input { width: 100%; box-sizing: border-box; padding: 12px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 10px; }
-        .bar-container { background: #ccc; height: 6px; margin: 4px 0 8px 0; border-radius: 3px; overflow: hidden; }
-        .bar-fill { background: #007bff; height: 100%; transition: width 0.3s; }
-        #log { margin-top: 10px; font-size: 14px; font-weight: bold; color: #28a745; min-height: 1.2em; }
+        /* The Square Box overlaying the video */
+        #ai-guide { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 160px; height: 160px; border: 2px solid red; box-shadow: 0 0 0 1000px rgba(0,0,0,0.4); pointer-events: none; }
+        
+        .inference-display { font-size: 24px; font-weight: 800; color: var(--primary); margin: 15px 0; min-height: 30px; }
+        input { width: 100%; box-sizing: border-box; padding: 12px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 12px; font-size: 16px; }
+        
+        button { width: 100%; padding: 16px; border: none; border-radius: 12px; font-size: 18px; font-weight: bold; cursor: pointer; transition: 0.2s; margin-bottom: 8px; }
+        #startBtn { background: var(--primary); color: white; }
+        .btn-add { background: var(--success); color: white; display: none; }
+        .btn-remove { background: var(--danger); color: white; }
+        
+        #log { font-weight: 600; color: var(--success); height: 20px; margin-top: 10px; font-size: 14px; }
+        .conf-item { text-align: left; font-size: 12px; margin-bottom: 4px; }
+        .bar-bg { background: #eee; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 2px; }
+        .bar-fill { background: var(--primary); height: 100%; transition: width 0.1s linear; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2 style="margin-top:0">🛒 Smart Cart AI</h2>
-    <input type="text" id="espIp" placeholder="Enter ESP32 IP (e.g. 192.168.1.50)">
-    <button id="startBtn">Initialize AI Scanner</button>
-    
-    <video id="webcam" autoplay muted playsinline></video>
-    <canvas id="debugCanvas" width="160" height="160"></canvas>
-    
-    <div id="top-result" class="inference-display">Paused</div>
-    
-    <div style="border-top: 2px solid #eee; padding-top: 10px;">
+    <h2>🛒 Smart Cart AI</h2>
+    <input type="text" id="espIp" placeholder="ESP32 IP (e.g. 192.168.1.50)">
+    <button id="startBtn">Launch Smooth Scanner</button>
+
+    <div id="video-container" style="display:none;">
+        <video id="webcam" autoplay muted playsinline></video>
+        <div id="ai-guide"></div>
+    </div>
+
+    <div id="top-result" class="inference-display">READY</div>
+
+    <div style="margin-top: 10px;">
         <button id="addBtn" class="btn-add">➕ Add Item</button>
         <button id="removeBtn" class="btn-remove">🔄 Remove Item</button>
     </div>
 
-    <div id="conf-list" class="confidence-list"></div>
-    <div id="log">Ready</div>
+    <div id="conf-list" style="margin-top: 15px; background: #f8f9fa; padding: 12px; border-radius: 12px;"></div>
+    <div id="log">Status: Idle</div>
 </div>
 
+<canvas id="offscreenCanvas" width="160" height="160" style="display:none;"></canvas>
+
 <script>
-    let classifier;
     let currentDetectedItem = null;
     let lastAddedItem = null;
-    let isBusy = false;
-    
-    // UPDATED LABELS
     const targets = ["Clay stick", "Sun stick", "Lighter", "Grips"];
 
     const video = document.getElementById('webcam');
-    const canvas = document.getElementById('debugCanvas');
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const startBtn = document.getElementById('startBtn');
+    const topDisplay = document.getElementById('top-result');
     const logDisplay = document.getElementById('log');
+    const canvas = document.getElementById('offscreenCanvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
 
-    document.getElementById('startBtn').onclick = async function() {
-        this.innerText = "Loading Model...";
+    startBtn.onclick = async () => {
+        startBtn.style.display = 'none';
+        document.getElementById('video-container').style.display = 'block';
+        initAI();
+    };
+
+    async function initAI() {
         try {
-            classifier = new EdgeImpulseClassifier();
+            const classifier = new EdgeImpulseClassifier();
             await classifier.init();
             
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: 320, height: 320 } 
+                video: { facingMode: "environment", width: 640, height: 480 } 
             });
             video.srcObject = stream;
-            
-            video.onloadeddata = () => {
+
+            video.onloadedmetadata = () => {
                 video.play();
-                this.style.display = 'none';
-                aiLoop(); // Start the loop
+                runInference(classifier);
             };
         } catch (e) {
-            alert("Camera Error: " + e.message);
+            topDisplay.innerText = "ERROR";
+            alert("Camera failed: " + e.message);
         }
-    };
+    }
 
-    async function aiLoop() {
-        if (!isBusy && video.readyState === 4) {
-            isBusy = true;
-            try {
-                // 1. Center crop and draw to 160x160
+    async function runInference(classifier) {
+        const props = classifier.getProperties();
+        
+        const processFrame = async () => {
+            if (video.readyState === 4) {
+                // 1. Precise Center Crop for "Fit to Shortest Axis"
                 const size = Math.min(video.videoWidth, video.videoHeight);
-                const x = (video.videoWidth - size) / 2;
-                const y = (video.videoHeight - size) / 2;
-                ctx.drawImage(video, x, y, size, size, 0, 0, 160, 160);
-
-                // 2. Normalize Pixels (RGB)
+                const sx = (video.videoWidth - size) / 2;
+                const sy = (video.videoHeight - size) / 2;
+                
+                ctx.drawImage(video, sx, sy, size, size, 0, 0, 160, 160);
+                
+                // 2. Fast Pixel Extraction
                 const imgData = ctx.getImageData(0, 0, 160, 160).data;
-                const pixels = [];
-                for (let i = 0; i < imgData.length; i += 4) {
-                    pixels.push(imgData[i] / 255.0);
-                    pixels.push(imgData[i+1] / 255.0);
-                    pixels.push(imgData[i+2] / 255.0);
+                const pixels = new Float32Array(160 * 160 * 3);
+                for (let i = 0; i < 160 * 160; i++) {
+                    pixels[i * 3] = imgData[i * 4] / 255.0;
+                    pixels[i * 3 + 1] = imgData[i * 4 + 1] / 255.0;
+                    pixels[i * 3 + 2] = imgData[i * 4 + 2] / 255.0;
                 }
 
-                // 3. Classify
-                const result = await classifier.classify(pixels);
+                // 3. Classify (This is the heavy part)
+                const result = await classifier.classify(Array.from(pixels));
                 
                 if (result.results) {
                     updateUI(result.results);
                 }
-            } catch (err) {
-                console.error("Inference Error:", err);
             }
-            // Add a slight delay to prevent CPU choking/freezing
-            setTimeout(() => { isBusy = false; }, 400); 
-        }
-        requestAnimationFrame(aiLoop);
+            // A tiny gap (50ms) keeps the UI "buttery smooth"
+            setTimeout(processFrame, 50);
+        };
+        
+        processFrame();
     }
 
     function updateUI(results) {
         const sorted = results.sort((a, b) => b.value - a.value);
-        const bestTarget = sorted.find(r => targets.includes(r.label));
-        
-        const topText = document.getElementById('top-result');
-        const addBtn = document.getElementById('addBtn');
-        const removeBtn = document.getElementById('removeBtn');
+        const best = sorted.find(r => targets.includes(r.label));
 
-        if (bestTarget && bestTarget.value > 0.35) {
-            topText.innerText = `${bestTarget.label} (${(bestTarget.value * 100).toFixed(0)}%)`;
-            currentDetectedItem = bestTarget.label;
-            addBtn.style.display = 'block';
-            addBtn.innerText = `➕ Add ${bestTarget.label}`;
-            removeBtn.innerText = `🗑️ Remove ${bestTarget.label}`;
+        if (best && best.value > 0.40) {
+            topDisplay.innerText = `${best.label} ${(best.value * 100).toFixed(0)}%`;
+            currentDetectedItem = best.label;
+            document.getElementById('addBtn').style.display = 'block';
+            document.getElementById('addBtn').innerText = `➕ Add ${best.label}`;
         } else {
-            topText.innerText = "Scanning...";
+            topDisplay.innerText = "Scanning...";
             currentDetectedItem = null;
-            addBtn.style.display = 'none';
-            removeBtn.innerText = lastAddedItem ? `🔄 Remove Last (${lastAddedItem})` : "🔄 Remove Item";
+            document.getElementById('addBtn').style.display = 'none';
         }
 
         let html = "";
         sorted.forEach(r => {
             const p = (r.value * 100).toFixed(0);
-            const isTarget = targets.includes(r.label);
-            html += `<div>${r.label}: ${p}% 
-                    <div class="bar-container">
-                        <div class="bar-fill" style="width:${p}%; background:${isTarget ? '#007bff' : '#999'}"></div>
-                    </div></div>`;
+            const isT = targets.includes(r.label);
+            html += `<div class="conf-item">${r.label}: ${p}%
+                    <div class="bar-bg"><div class="bar-fill" style="width:${p}%; background:${isT?'':'#bbb'}"></div></div></div>`;
         });
         document.getElementById('conf-list').innerHTML = html;
     }
 
+    // ACTIONS
     document.getElementById('addBtn').onclick = () => sendToESP('add', currentDetectedItem);
-    
     document.getElementById('removeBtn').onclick = () => {
         const item = currentDetectedItem || lastAddedItem;
-        if (item) {
-            sendToESP('remove', item);
-        } else {
-            logDisplay.innerText = "Nothing to remove!";
-            logDisplay.style.color = "#dc3545";
-        }
+        if (item) sendToESP('remove', item);
     };
 
     function sendToESP(action, label) {
         const ip = document.getElementById('espIp').value;
-        if (!ip) return alert("Please enter ESP32 IP");
-
-        logDisplay.innerText = `${action === 'add' ? 'Adding' : 'Removing'} ${label}...`;
-        logDisplay.style.color = "#007bff";
-
+        if (!ip) return;
         const img = new Image();
         img.src = `http://${ip}/${action}?label=${encodeURIComponent(label)}&t=${Date.now()}`;
-        
-        img.onload = img.onerror = () => {
-            logDisplay.innerText = `${action === 'add' ? '✅ Added' : '🗑️ Removed'}: ${label}`;
-            logDisplay.style.color = action === 'add' ? "#28a745" : "#dc3545";
-            if (action === 'add') lastAddedItem = label;
-            else if (lastAddedItem === label) lastAddedItem = null;
-        };
+        logDisplay.innerText = `Sent: ${action} ${label}`;
+        if (action === 'add') lastAddedItem = label;
     }
 </script>
 </body>
